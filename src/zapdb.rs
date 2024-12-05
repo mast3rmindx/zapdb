@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Write};
-
+use tokio;
 pub struct ZapDB {
     data: HashMap<String, String>,
 }
@@ -25,14 +25,14 @@ impl ZapDB {
         self.data.remove(key);
     }
 
-    pub fn save(&self, path: &str) -> io::Result<()> {
+    pub async fn save(&self, path: &str) -> io::Result<()> {
         let encoded: Vec<u8> = bincode::serialize(&self.data).unwrap();
         let mut file = File::create(path)?;
         file.write_all(&encoded)?;
         Ok(())
     }
 
-    pub fn load(&mut self, path: &str) -> io::Result<()> {
+    pub async fn load(&mut self, path: &str) -> io::Result<()> {
         let file = File::open(path)?;
         let decoded: HashMap<String, String> = bincode::deserialize_from(file).unwrap();
         self.data = decoded;
