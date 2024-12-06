@@ -54,7 +54,7 @@ impl Database {
             tables: HashMap::new(),
         }
     }
-    pub fn save(&self, path: &str) -> io::Result<()> {
+    pub async fn save(&self, path: &str) -> io::Result<()> {
         let start = Instant::now();
         let encoded: Vec<u8> = bincode::serialize(&self.tables).unwrap();
         let mut file = File::create(path)?;
@@ -64,7 +64,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn load(&mut self, path: &str) -> io::Result<()> {
+    pub async fn load(&mut self, path: &str) -> io::Result<()> {
         let start = Instant::now();
         let mut file = File::open(path)?;
         let mut buffer = Vec::new();

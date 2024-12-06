@@ -1,10 +1,12 @@
 mod zapdb;
+mod networking;
 use crate::zapdb::{Column, DataType, Database, Value};
 use std::collections::HashMap;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let mut db = Database::new();
-    db.load("database.zap").unwrap();
+    db.load("database.zap").await.unwrap();
     /* db.create_table(
         "users".to_string(),
         vec![
@@ -67,7 +69,7 @@ fn main() {
         },
     )
     .unwrap();
-    db.save("database.zap").unwrap();
+    db.save("database.zap").await.unwrap();
     let deleted = db
         .delete("users", |user| match user.get("name") {
             Some(Value::String(name)) => name == "Alice",
@@ -76,4 +78,5 @@ fn main() {
         .unwrap();
 
     println!("Deleted {} users", deleted);
+    networking::main().await;
 }
