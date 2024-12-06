@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::time::Instant;
 use std::fs::File;
-use std::io::{self, Write};
+use std::io::{self, Write, Read};
 use serde::{Serialize, Deserialize};
 
 
@@ -61,6 +61,20 @@ impl Database {
         file.write_all(&encoded)?;
 
         println!("Database saved in {:?}", start.elapsed());
+        Ok(())
+    }
+
+    pub fn load(&mut self, path: &str) -> io::Result<()> {
+        let start = Instant::now();
+        let mut file = File::open(path)?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)?;
+    
+        let tables: HashMap<String, Table> = bincode::deserialize(&buffer)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        
+        self.tables = tables;
+        println!("Database loaded in {:?}", start.elapsed());
         Ok(())
     }
     pub fn create_table(&mut self, name: String, columns: Vec<Column>) -> Result<(), String> {
