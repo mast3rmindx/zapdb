@@ -50,7 +50,7 @@ fn main() {
             user.insert("age".to_string(), Value::Integer(31));
         }
     ).unwrap();
-
+    db.save("database.zap").unwrap();
     let deleted = db.delete("users", 
         |user| match user.get("name") { 
             Some(Value::String(name)) => name == "Alice", 

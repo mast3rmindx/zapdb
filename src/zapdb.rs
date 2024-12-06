@@ -2,7 +2,12 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::time::Instant;
-#[derive(Clone, Debug)]
+use std::fs::File;
+use std::io::{self, Write};
+use serde::{Serialize, Deserialize};
+
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Column {
     pub name: String,
     pub data_type: DataType,
@@ -14,7 +19,7 @@ impl Column {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum DataType {
     Integer,
     String,
@@ -22,14 +27,15 @@ pub enum DataType {
     Boolean,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Table {
     name: String,
     columns: Vec<Column>,
     data: Vec<HashMap<String, Value>>,
 }
 
-#[derive(Clone, Debug)]
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Value {
     Integer(i64),
     String(String),
@@ -48,7 +54,15 @@ impl Database {
             tables: HashMap::new(),
         }
     }
+    pub fn save(&self, path: &str) -> io::Result<()> {
+        let start = Instant::now();
+        let encoded: Vec<u8> = bincode::serialize(&self.tables).unwrap();
+        let mut file = File::create(path)?;
+        file.write_all(&encoded)?;
 
+        println!("Database saved in {:?}", start.elapsed());
+        Ok(())
+    }
     pub fn create_table(&mut self, name: String, columns: Vec<Column>) -> Result<(), String> {
         let start = Instant::now();
         if self.tables.contains_key(&name) {
@@ -78,7 +92,6 @@ impl Database {
             if !row.contains_key(&col.name) {
                 return Err(format!("Missing column: {}", col.name));
             }
-            //TODO: Add type checking logic here
         }
 
         table.data.push(row);
