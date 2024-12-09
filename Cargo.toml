@@ -1,6 +1,6 @@
 [package]
 name = "zapdb"
-version = "0.9.0"
+version = "1.0.0"
 authors = ["Smartlinuxcoder"]
 edition = "2021"
 description = "Lightweight sql-like database"
