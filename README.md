@@ -12,7 +12,7 @@ zapdb is a lightweight database written in Rust that provides an easy-to-use int
 
 #### Installation
 
-To use zapdb in your Rust project, add the following dependency to your `Cargo.toml` file:
+To use zapdb in your Rust project, add the following dependencies to your `Cargo.toml` file:
 
 ```toml
 [dependencies]
