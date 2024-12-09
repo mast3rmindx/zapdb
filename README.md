@@ -16,24 +16,34 @@ To use zapdb in your Rust project, add the following dependency to your `Cargo.t
 
 ```toml
 [dependencies]
-zapdb = { git = "https://github.com/Smartlinuxcoder/zapdb" }
+tokio = "1.42.0"
+zapdb = "0.1.1"
 ```
+Or use the `cargo add` command:
+
+```bash
+cargo add zapdb tokio
+```
+
 
 #### Usage
 
 Here is a simple example demonstrating how to use zapdb:
 
 ```rust
-mod zapdb;
-mod networking;
-use crate::zapdb::{Column, DataType, Database, Value};
+
+use zapdb::{Column, DataType, Database, Value};
 use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() {
     let mut db = Database::new();
-    db.load("database.zap").await.unwrap();
 
+    // Loading the database from a file
+    match db.load("database.zap").await {
+        Ok(_) => println!("Database loaded successfully."),
+        Err(e) => println!("Failed to load database: {:?}", e),
+    };
     // Creating a table
     db.create_table(
         "users".to_string(),
@@ -112,6 +122,7 @@ async fn main() {
         .unwrap();
 
     println!("Deleted {} users", deleted);
+}
 }
 ```
 
