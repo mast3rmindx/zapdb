@@ -1,5 +1,4 @@
 mod zapdb;
-mod networking;
 use crate::zapdb::{Column, DataType, Database, Value};
 use std::collections::HashMap;
 
