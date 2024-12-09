@@ -1,3 +1,29 @@
+### zapdb
+
+zapdb is a lightweight database written in Rust that provides an easy-to-use interface for managing and querying data. It offers basic database functionalities such as creating tables, inserting, updating, selecting, and deleting records. The project is designed to be simple yet powerful for small to medium-sized applications.
+
+#### Features
+
+- Create tables with specified columns and data types
+- Insert, update, and delete records
+- Query records using custom filters
+- Load and save the database to a file
+- Asynchronous operations using Tokio
+
+#### Installation
+
+To use zapdb in your Rust project, add the following dependency to your `Cargo.toml` file:
+
+```toml
+[dependencies]
+zapdb = { git = "https://github.com/Smartlinuxcoder/zapdb" }
+```
+
+#### Usage
+
+Here is a simple example demonstrating how to use zapdb:
+
+```rust
 mod zapdb;
 mod networking;
 use crate::zapdb::{Column, DataType, Database, Value};
@@ -7,7 +33,9 @@ use std::collections::HashMap;
 async fn main() {
     let mut db = Database::new();
     db.load("database.zap").await.unwrap();
-    /* db.create_table(
+
+    // Creating a table
+    db.create_table(
         "users".to_string(),
         vec![
             Column {
@@ -26,6 +54,7 @@ async fn main() {
     )
     .unwrap();
 
+    // Inserting records
     let user1: HashMap<String, Value> = HashMap::from([
         ("id".to_string(), Value::Integer(1)),
         ("name".to_string(), Value::String("Alice".to_string())),
@@ -41,7 +70,7 @@ async fn main() {
     db.insert("users", user1).unwrap();
     db.insert("users", user2).unwrap();
 
-    */
+    // Selecting records
     let users = db
         .select(
             "users",
@@ -58,6 +87,7 @@ async fn main() {
         println!("Spotted user: {:?}", user);
     }
 
+    // Updating records
     db.update(
         "users",
         |user| match user.get("id") {
@@ -69,7 +99,11 @@ async fn main() {
         },
     )
     .unwrap();
+
+    // Saving the database
     db.save("database.zap").await.unwrap();
+
+    // Deleting records
     let deleted = db
         .delete("users", |user| match user.get("name") {
             Some(Value::String(name)) => name == "Alice",
@@ -78,4 +112,15 @@ async fn main() {
         .unwrap();
 
     println!("Deleted {} users", deleted);
+    networking::main().await;
 }
+```
+
+#### Contribution
+
+Contributions are welcome! Feel free to open an issue or submit a pull request on GitHub.
+
+#### License
+
+This project is licensed under the GNU General Public License v3.0. See the [LICENSE](https://github.com/Smartlinuxcoder/zapdb/blob/main/LICENSE) file for details.
+
