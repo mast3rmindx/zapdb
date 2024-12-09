@@ -365,5 +365,6 @@ name = "zapdb"
 version = "0.9.0"
 dependencies = [
  "bincode",
+ "serde",
  "tokio",
 ]
