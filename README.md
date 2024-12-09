@@ -112,7 +112,6 @@ async fn main() {
         .unwrap();
 
     println!("Deleted {} users", deleted);
-    networking::main().await;
 }
 ```
 
