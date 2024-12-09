@@ -2,6 +2,8 @@
 name = "zapdb"
 version = "0.1.0"
 edition = "2021"
+license-file = "LICENSE"
+keywords = ["database", "db", "in-memory"]
 
 [dependencies]
 axum = "0.7.9"
