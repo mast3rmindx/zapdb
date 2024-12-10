@@ -123,7 +123,7 @@ async fn main() {
 
     println!("Deleted {} users", deleted);
 }
-}
+
 ```
 
 #### Contribution
