@@ -1,6 +1,6 @@
 ### zapdb
 
-zapdb is a lightweight database written in Rust that provides an easy-to-use interface for managing and querying data. It offers basic database functionalities such as creating tables, inserting, updating, selecting, and deleting records. The project is designed to be simple yet powerful for small to medium-sized applications.
+zapdb is a lightweight database written in Rust. It offers basic database functionalities such as creating tables, inserting, updating, selecting, and deleting records.
 
 #### Features
 
@@ -8,7 +8,7 @@ zapdb is a lightweight database written in Rust that provides an easy-to-use int
 - Insert, update, and delete records
 - Query records using custom filters
 - Load and save the database to a file
-- Asynchronous operations using Tokio
+- Asynchronous stuff
 
 #### Installation
 
@@ -132,5 +132,5 @@ Contributions are welcome! Feel free to open an issue or submit a pull request o
 
 #### License
 
-This project is licensed under the GNU General Public License v3.0. See the [LICENSE](https://github.com/Smartlinuxcoder/zapdb/blob/main/LICENSE) file for details.
+This project is licensed under the GNU General Public License v3.0.  [LICENSE](https://github.com/Smartlinuxcoder/zapdb/blob/main/LICENSE)
 
