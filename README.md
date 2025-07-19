@@ -14,6 +14,7 @@ zapdb is a lightweight, in-memory, SQL-like database written in Rust. It's desig
 - **Constraints:** Supports `NOT NULL`, `UNIQUE`, and `FOREIGN KEY` constraints.
 - **Transactions:** Provides ACID transactions to ensure data consistency.
 - **Joins:** Supports `INNER`, `LEFT`, and `RIGHT` joins to query data from multiple tables.
+- **Query Optimizer:** Improves the performance of complex queries by reordering `And` queries to prioritize indexed columns.
 
 ## Getting Started
 
@@ -137,6 +138,10 @@ Before being encrypted, the database is compressed using Gzip to reduce its size
 ### Data Integrity
 
 To ensure that the data is not corrupted, zapdb uses a Merkle tree. The leaves of the tree are the Blake3 hashes of each row in a table. The root of the tree is a single hash that represents the entire table. When the database is loaded, the Merkle tree is rebuilt and the root hash is compared to the stored hash to verify the integrity of the data.
+
+### Query Optimizer
+
+zapdb includes a simple query optimizer that improves the performance of complex queries. When you execute a query with multiple `And` conditions, the optimizer reorders the conditions to prioritize those that use an index. This can significantly reduce the number of rows that need to be scanned, resulting in faster query execution times.
 
 ## Contributing
 

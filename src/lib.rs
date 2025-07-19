@@ -13,6 +13,9 @@ use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
+use crate::optimizer::QueryPlanner;
+
+mod optimizer;
 use rand::{rngs::OsRng, RngCore};
 use rs_merkle::{MerkleTree, Hasher as MerkleHasher};
 use chrono::{DateTime, Utc};
@@ -338,6 +341,7 @@ pub struct Database {
     key: [u8; 32],
     wal_writer: Arc<RwLock<WalWriter>>,
     wal_path: String,
+    query_planner: QueryPlanner,
 }
 
 impl Database {
@@ -347,6 +351,7 @@ impl Database {
             key,
             wal_writer: Arc::new(RwLock::new(WalWriter::new(wal_path).unwrap())),
             wal_path: wal_path.to_string(),
+            query_planner: QueryPlanner::new(),
         }
     }
 
@@ -678,7 +683,9 @@ impl Database {
             .get(table_name)
             .ok_or_else(|| format!("Table {} not found", table_name))?;
 
-        let results = match query {
+        let optimized_query = self.query_planner.optimize(query.clone(), table);
+
+        let results = match &optimized_query {
             Query::Join(join) => {
                 let target_table = tables
                     .get(&join.target_table)
@@ -692,7 +699,7 @@ impl Database {
                 vec![row]
             }
             _ => self
-                .execute_query(table, query)
+                .execute_query(table, &optimized_query)
                 .into_iter()
                 .map(|i| table.data[i].clone())
                 .collect(),
@@ -918,8 +925,6 @@ impl Database {
                     .iter()
                     .map(|q| self.execute_query(table, q))
                     .collect();
-
-                result_sets.sort_by_key(|a| a.len());
 
                 let mut final_result = result_sets[0].clone();
                 for i in 1..result_sets.len() {
