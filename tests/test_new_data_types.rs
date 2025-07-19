@@ -1,20 +1,19 @@
 use zapdb::{
-    Database,
+    create_pool,
     Value,
     Column,
     DataType,
     Query,
-    Condition,
-    Operator,
 };
 use std::collections::HashMap;
-use chrono::{Utc, TimeZone};
+use chrono::{Utc};
 use uuid::Uuid;
 use serde_json::json;
 
 #[tokio::test]
 async fn test_new_data_types() {
-    let mut db = Database::new([0; 32], "test_new_data_types.wal");
+    let pool = create_pool([0; 32], "test_new_data_types.wal").unwrap();
+    let db = pool.get().unwrap();
     let columns = vec![
         Column::new("id".to_string(), DataType::Integer, vec![]),
         Column::new("created_at".to_string(), DataType::DateTime, vec![]),

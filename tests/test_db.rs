@@ -1,12 +1,13 @@
 #[cfg(test)]
 mod tests {
-    use zapdb::{Database, Column, DataType, Value, Query, Constraint};
+    use zapdb::{create_pool, Column, DataType, Value, Query, Constraint};
     use std::collections::HashMap;
     use std::fs;
 
     #[tokio::test]
     async fn test_not_null_constraint() {
-        let mut db = Database::new([0; 32], "test_not_null_constraint.wal");
+        let pool = create_pool([0; 32], "test_not_null_constraint.wal").unwrap();
+        let db = pool.get().unwrap();
         let columns = vec![
             Column::new("id".to_string(), DataType::Integer, vec![Constraint::NotNull]),
             Column::new("name".to_string(), DataType::String, vec![]),
@@ -26,7 +27,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_unique_constraint() {
-        let mut db = Database::new([0; 32], "test_unique_constraint.wal");
+        let pool = create_pool([0; 32], "test_unique_constraint.wal").unwrap();
+        let db = pool.get().unwrap();
         let columns = vec![
             Column::new("id".to_string(), DataType::Integer, vec![Constraint::Unique]),
             Column::new("name".to_string(), DataType::String, vec![]),
@@ -46,7 +48,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_foreign_key_constraint() {
-        let mut db = Database::new([0; 32], "test_foreign_key_constraint.wal");
+        let pool = create_pool([0; 32], "test_foreign_key_constraint.wal").unwrap();
+        let db = pool.get().unwrap();
 
         let users_columns = vec![
             Column::new("id".to_string(), DataType::Integer, vec![Constraint::Unique]),
@@ -79,7 +82,8 @@ mod tests {
         let key = [0u8; 32];
         let db_path = "test_db.zap";
         let wal_path = "test_db.wal";
-        let mut db = Database::new(key, wal_path);
+        let pool = create_pool(key, wal_path).unwrap();
+        let db = pool.get().unwrap();
 
         // Create a table and insert some data
         db.create_table(
@@ -109,7 +113,8 @@ mod tests {
         assert!(metadata.len() < encoded.len() as u64);
 
         // Load the database
-        let mut new_db = Database::new(key, wal_path);
+        let new_pool = create_pool(key, wal_path).unwrap();
+        let new_db = new_pool.get().unwrap();
         new_db.load(db_path).await.unwrap();
 
         // Verify integrity
@@ -130,7 +135,8 @@ mod tests {
         let wal_path = "test_wal.wal";
 
         // Create a database and insert some data
-        let mut db = Database::new(key, wal_path);
+        let pool = create_pool(key, wal_path).unwrap();
+        let db = pool.get().unwrap();
         db.create_table(
             "users".to_string(),
             vec![
@@ -151,7 +157,8 @@ mod tests {
         // Simulate a crash (don't call save)
 
         // Load the database
-        let mut new_db = Database::new(key, wal_path);
+        let new_pool = create_pool(key, wal_path).unwrap();
+        let new_db = new_pool.get().unwrap();
         new_db.load(db_path).await.unwrap();
 
         // Verify data

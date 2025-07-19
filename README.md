@@ -31,14 +31,15 @@ tokio = { version = "1", features = ["full"] }
 Here's a quick example of how to use zapdb:
 
 ```rust
-use zapdb::{Column, DataType, Database, Value, Query, Condition, Operator, Constraint};
+use zapdb::{create_pool, Column, DataType, Value, Query, Condition, Operator, Constraint};
 use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() {
-    // Create a new database with a 32-byte key for encryption.
+    // Create a new connection pool with a 32-byte key for encryption.
     let key = [0u8; 32];
-    let mut db = Database::new(key, "database.wal");
+    let pool = create_pool(key, "database.wal").unwrap();
+    let db = pool.get().unwrap();
 
     // Create a table with constraints.
     db.create_table(
@@ -65,11 +66,41 @@ async fn main() {
     db.save("my_database.zap").await.unwrap();
 
     // Load the database from a file.
-    let mut new_db = Database::new(key, "database.wal");
+    let new_pool = create_pool(key, "database.wal").unwrap();
+    let new_db = new_pool.get().unwrap();
     new_db.load("my_database.zap").await.unwrap();
 
     // Verify the integrity of the database.
     assert!(new_db.verify_integrity().await);
+}
+```
+
+### Transactions
+
+zapdb supports ACID transactions. Here's an example of how to use a transaction:
+
+```rust
+use zapdb::{create_pool, begin_transaction, Value};
+use std::collections::HashMap;
+
+async fn transaction_example() {
+    let pool = create_pool([0; 32], "transaction_example.wal").unwrap();
+    let db = pool.get().unwrap();
+    // ... (create tables)
+
+    let mut transaction = begin_transaction();
+
+    let mut row1 = HashMap::new();
+    row1.insert("id".to_string(), Value::Integer(1));
+    row1.insert("name".to_string(), Value::String("Alice".to_string()));
+    transaction.insert("users".to_string(), row1);
+
+    let mut row2 = HashMap::new();
+    row2.insert("id".to_string(), Value::Integer(2));
+    row2.insert("name".to_string(), Value::String("Bob".to_string()));
+    transaction.insert("users".to_string(), row2);
+
+    db.commit(transaction).await.unwrap();
 }
 ```
 
@@ -78,10 +109,11 @@ async fn main() {
 zapdb supports `INNER`, `LEFT`, and `RIGHT` joins. Here's an example of how to perform a `LEFT JOIN`:
 
 ```rust
-use zapdb::{Database, Query, Join, JoinType};
+use zapdb::{create_pool, Query, Join, JoinType};
 
 async fn join_example() {
-    let mut db = Database::new([0; 32], "join_example.wal");
+    let pool = create_pool([0; 32], "join_example.wal").unwrap();
+    let db = pool.get().unwrap();
     // ... (create tables and insert data)
 
     let join = Join {
@@ -108,10 +140,11 @@ zapdb supports the following aggregate functions:
 Here's an example of how to use the `COUNT` function:
 
 ```rust
-use zapdb::{Database, Query, AggregateQuery, AggregateFunction};
+use zapdb::{create_pool, Query, AggregateQuery, AggregateFunction};
 
 async fn aggregate_example() {
-    let mut db = Database::new([0; 32], "aggregate_example.wal");
+    let pool = create_pool([0; 32], "aggregate_example.wal").unwrap();
+    let db = pool.get().unwrap();
     // ... (create tables and insert data)
 
     let query = Query::Aggregate(AggregateQuery {

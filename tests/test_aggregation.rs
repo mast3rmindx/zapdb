@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use zapdb::{Database, Column, DataType, Value, Query, AggregateQuery, AggregateFunction};
+    use zapdb::{create_pool, PooledConnection, Column, DataType, Value, Query, AggregateQuery, AggregateFunction};
     use std::collections::HashMap;
-    use std::fs;
 
-    async fn setup_db() -> Database {
-        let mut db = Database::new([0; 32], "test_aggregation.wal");
+    async fn setup_db() -> PooledConnection {
+        let pool = create_pool([0; 32], "test_aggregation.wal").unwrap();
+        let db = pool.get().unwrap();
         let columns = vec![
             Column::new("id".to_string(), DataType::Integer, vec![]),
             Column::new("name".to_string(), DataType::String, vec![]),

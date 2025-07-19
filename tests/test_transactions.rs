@@ -1,12 +1,13 @@
 #[cfg(test)]
 mod tests {
-    use zapdb::{Database, Column, DataType, Value, Query, Constraint};
+    use zapdb::{create_pool, Column, DataType, Value, Query, Constraint, begin_transaction};
     use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_transaction_commit() {
         let key = [0u8; 32];
-        let mut db = Database::new(key, "test_transactions.wal");
+        let pool = create_pool(key, "test_transactions.wal").unwrap();
+        let db = pool.get().unwrap();
 
         db.create_table(
             "users".to_string(),
@@ -18,7 +19,7 @@ mod tests {
         .await
         .unwrap();
 
-        let mut transaction = db.begin_transaction();
+        let mut transaction = begin_transaction();
 
         let mut row1 = HashMap::new();
         row1.insert("id".to_string(), Value::Integer(1));
@@ -39,7 +40,8 @@ mod tests {
     #[tokio::test]
     async fn test_transaction_rollback() {
         let key = [0u8; 32];
-        let mut db = Database::new(key, "test_transactions_rollback.wal");
+        let pool = create_pool(key, "test_transactions_rollback.wal").unwrap();
+        let db = pool.get().unwrap();
 
         db.create_table(
             "users".to_string(),
@@ -51,7 +53,7 @@ mod tests {
         .await
         .unwrap();
 
-        let mut transaction = db.begin_transaction();
+        let mut transaction = begin_transaction();
 
         let mut row1 = HashMap::new();
         row1.insert("id".to_string(), Value::Integer(1));
