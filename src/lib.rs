@@ -9,24 +9,21 @@ use flate2::read::GzDecoder;
 use flate2::Compression;
 use tokio::sync::RwLock;
 use std::sync::Arc;
-use chacha20poly1305::{
-    aead::{Aead},
-    XChaCha20Poly1305, KeyInit,
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Nonce,
 };
 use rand::{rngs::OsRng, RngCore};
 use rs_merkle::{MerkleTree, Hasher as MerkleHasher};
-use sha3::{Digest, Keccak256};
 
 #[derive(Clone)]
-struct Keccak256Hasher;
+struct Blake3Hasher;
 
-impl MerkleHasher for Keccak256Hasher {
+impl MerkleHasher for Blake3Hasher {
     type Hash = [u8; 32];
 
     fn hash(data: &[u8]) -> [u8; 32] {
-        let mut hasher = Keccak256::new();
-        hasher.update(data);
-        hasher.finalize().into()
+        blake3::hash(data).into()
     }
 }
 
@@ -60,7 +57,7 @@ pub struct Table {
     data: Vec<HashMap<String, Value>>,
     indexes: HashMap<String, BTreeMap<Value, Vec<usize>>>,
     #[serde(skip)]
-    merkle_tree: Option<MerkleTree<Keccak256Hasher>>,
+    merkle_tree: Option<MerkleTree<Blake3Hasher>>,
 }
 
 impl Table {
@@ -68,9 +65,9 @@ impl Table {
         let mut leaves = Vec::new();
         for row in &self.data {
             let encoded_row = bincode::serialize(&row).unwrap();
-            leaves.push(Keccak256Hasher::hash(&encoded_row));
+            leaves.push(Blake3Hasher::hash(&encoded_row));
         }
-        self.merkle_tree = Some(MerkleTree::<Keccak256Hasher>::from_leaves(&leaves));
+        self.merkle_tree = Some(MerkleTree::<Blake3Hasher>::from_leaves(&leaves));
     }
 
     pub fn verify_integrity(&self) -> bool {
@@ -78,9 +75,9 @@ impl Table {
             let mut leaves = Vec::new();
             for row in &self.data {
                 let encoded_row = bincode::serialize(&row).unwrap();
-                leaves.push(Keccak256Hasher::hash(&encoded_row));
+                leaves.push(Blake3Hasher::hash(&encoded_row));
             }
-            let new_tree = MerkleTree::<Keccak256Hasher>::from_leaves(&leaves);
+            let new_tree = MerkleTree::<Blake3Hasher>::from_leaves(&leaves);
             tree.root() == new_tree.root()
         } else {
             true
@@ -194,12 +191,13 @@ impl Database {
         encoder.write_all(&encoded)?;
         let compressed_data = encoder.finish()?;
 
-        let cipher = XChaCha20Poly1305::new((&self.key).into());
-        let mut nonce = [0u8; 24];
-        OsRng.fill_bytes(&mut nonce);
+        let cipher = Aes256Gcm::new((&self.key).into());
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
 
         let ciphertext = cipher
-            .encrypt((&nonce).into(), compressed_data.as_slice())
+            .encrypt(nonce, compressed_data.as_slice())
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
         let mut file = File::create(path)?;
@@ -215,12 +213,12 @@ impl Database {
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
 
-        let cipher = XChaCha20Poly1305::new((&self.key).into());
-        let nonce = &buffer[..24];
-        let ciphertext = &buffer[24..];
+        let cipher = Aes256Gcm::new((&self.key).into());
+        let nonce = Nonce::from_slice(&buffer[..12]);
+        let ciphertext = &buffer[12..];
 
         let decrypted_data = cipher
-            .decrypt(nonce.into(), ciphertext)
+            .decrypt(nonce, ciphertext)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
         let mut decoder = GzDecoder::new(&decrypted_data[..]);
