@@ -9,6 +9,11 @@ zapdb is a lightweight database written in Rust. It offers basic database functi
 - Query records using custom filters
 - Load and save the database to a file
 - Asynchronous stuff
+- Encryption support
+
+### Encryption
+
+zapdb supports encryption out of the box. To use it, you need to provide a 32-byte key to the `Database::new` function. The database will then be encrypted when saved to a file and decrypted when loaded.
 
 #### Installation
 
@@ -37,7 +42,8 @@ use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() {
-    let mut db = Database::new();
+    let key = [0u8; 32];
+    let mut db = Database::new(key);
 
     // Loading the database from a file
     match db.load("database.zap").await {
