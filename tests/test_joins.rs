@@ -1,10 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use zapdb::{Database, Column, DataType, Value, Query, Join, JoinType};
+    use zapdb::{create_pool, PooledConnection, Column, DataType, Value, Query, Join, JoinType};
     use std::collections::HashMap;
 
-    async fn setup_db() -> Database {
-        let mut db = Database::new([0; 32], "test_joins.wal");
+    async fn setup_db() -> PooledConnection {
+        let pool = create_pool([0; 32], "test_joins.wal").unwrap();
+        let db = pool.get().unwrap();
 
         // Create users table
         let users_columns = vec![
@@ -89,7 +90,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_right_join() {
-        let mut db = setup_db().await;
+        let db = setup_db().await;
 
         let mut post4 = HashMap::new();
         post4.insert("id".to_string(), Value::Integer(104));

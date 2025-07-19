@@ -4,6 +4,8 @@ use std::time::{Instant, Duration};
 use std::fs::File;
 use std::io::{self, Write, Read, BufWriter};
 use serde::{Serialize, Deserialize};
+use std::error::Error;
+use std::fmt;
 use flate2::write::GzEncoder;
 use flate2::read::GzDecoder;
 use flate2::Compression;
@@ -344,8 +346,12 @@ pub struct Database {
     query_planner: QueryPlanner,
 }
 
+pub fn begin_transaction() -> Transaction {
+    Transaction::new()
+}
+
 impl Database {
-    pub fn new(key: [u8; 32], wal_path: &str) -> Self {
+    fn new(key: [u8; 32], wal_path: &str) -> Self {
         Self {
             tables: Arc::new(RwLock::new(HashMap::new())),
             key,
@@ -355,11 +361,7 @@ impl Database {
         }
     }
 
-    pub fn begin_transaction(&self) -> Transaction {
-        Transaction::new()
-    }
-
-    pub async fn commit(&mut self, transaction: Transaction) -> Result<(), String> {
+    pub async fn commit(&self, transaction: Transaction) -> Result<(), String> {
         let mut wal_writer = self.wal_writer.write().await;
         for (op, _) in &transaction.operations {
             let wal_entry = match op {
@@ -402,10 +404,11 @@ impl Database {
         Ok(())
     }
 
-    pub fn rollback(&self, transaction: Transaction) {
+    pub fn rollback(&self, _transaction: Transaction) {
         // No-op for now, as commit will handle rollback on failure.
         // This can be expanded later if needed.
     }
+
     pub async fn save(&self, path: &str) -> io::Result<()> {
         let start = Instant::now();
         let tables = self.tables.read().await;
@@ -436,7 +439,7 @@ impl Database {
         Ok(())
     }
 
-    pub async fn load(&mut self, path: &str) -> io::Result<()> {
+    pub async fn load(&self, path: &str) -> io::Result<()> {
         let start = Instant::now();
         if let Ok(mut file) = File::open(path) {
             let mut buffer = Vec::new();
@@ -482,7 +485,7 @@ impl Database {
         Ok(())
     }
 
-    async fn replay_wal(&mut self) -> io::Result<()> {
+    async fn replay_wal(&self) -> io::Result<()> {
         let mut file = match File::open(&self.wal_path) {
             Ok(f) => f,
             Err(_) => return Ok(()),
@@ -500,7 +503,7 @@ impl Database {
         Ok(())
     }
 
-    async fn apply_wal_entry(&mut self, entry: WalEntry) {
+    async fn apply_wal_entry(&self, entry: WalEntry) {
         match entry {
             WalEntry::CreateTable { name, columns } => {
                 let _ = self.create_table(name, columns).await;
@@ -517,7 +520,7 @@ impl Database {
         }
     }
     pub async fn create_table(
-        &mut self,
+        &self,
         name: String,
         columns: Vec<Column>,
     ) -> Result<Duration, String> {
@@ -549,7 +552,7 @@ impl Database {
         Ok(start.elapsed())
     }
 
-    pub async fn create_index(&mut self, table_name: &str, column_name: &str) -> Result<(), String> {
+    pub async fn create_index(&self, table_name: &str, column_name: &str) -> Result<(), String> {
         let mut tables = self.tables.write().await;
         let table = tables
             .get_mut(table_name)
@@ -652,7 +655,7 @@ impl Database {
     }
 
     pub async fn insert(
-        &mut self,
+        &self,
         table_name: &str,
         row: HashMap<String, Value>,
     ) -> Result<Duration, String> {
@@ -1033,7 +1036,7 @@ impl Database {
     }
 
     pub async fn update(
-        &mut self,
+        &self,
         table_name: &str,
         query: &Query,
         update_fn: fn(&mut HashMap<String, Value>),
@@ -1091,7 +1094,7 @@ impl Database {
         Ok(deleted_count)
     }
 
-    pub async fn delete(&mut self, table_name: &str, query: &Query) -> Result<usize, String> {
+    pub async fn delete(&self, table_name: &str, query: &Query) -> Result<usize, String> {
         let wal_entry = WalEntry::Delete {
             table_name: table_name.to_string(),
             query: query.clone(),
@@ -1115,4 +1118,54 @@ impl Database {
         }
         true
     }
+}
+
+#[derive(Debug)]
+pub struct ConnectionError(String);
+
+impl fmt::Display for ConnectionError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Error for ConnectionError {}
+
+pub struct DbConnectionManager {
+    key: [u8; 32],
+    wal_path: String,
+}
+
+impl DbConnectionManager {
+    pub fn new(key: [u8; 32], wal_path: &str) -> Self {
+        DbConnectionManager {
+            key,
+            wal_path: wal_path.to_string(),
+        }
+    }
+}
+
+impl r2d2::ManageConnection for DbConnectionManager {
+    type Connection = Database;
+    type Error = ConnectionError;
+
+    fn connect(&self) -> Result<Self::Connection, Self::Error> {
+        Ok(Database::new(self.key, &self.wal_path))
+    }
+
+    fn is_valid(&self, _conn: &mut Self::Connection) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn has_broken(&self, _conn: &mut Self::Connection) -> bool {
+        false
+    }
+}
+
+pub type Pool = r2d2::Pool<DbConnectionManager>;
+pub type PooledConnection = r2d2::PooledConnection<DbConnectionManager>;
+
+pub fn create_pool(key: [u8; 32], wal_path: &str) -> Result<Pool, r2d2::Error> {
+    let manager = DbConnectionManager::new(key, wal_path);
+    r2d2::Pool::new(manager)
 }
