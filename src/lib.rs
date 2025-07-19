@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use std::fs::File;
 use std::io::{self, Write, Read};
 use serde::{Serialize, Deserialize};
+use tokio::sync::RwLock;
+use std::sync::Arc;
 
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -26,11 +28,14 @@ pub enum DataType {
     Boolean,
 }
 
+use std::collections::BTreeMap;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Table {
     name: String,
     columns: Vec<Column>,
     data: Vec<HashMap<String, Value>>,
+    indexes: HashMap<String, BTreeMap<Value, Vec<usize>>>,
 }
 
 
@@ -56,6 +61,50 @@ impl PartialEq for Value {
     }
 }
 
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Value::Integer(a), Value::Integer(b)) => a.partial_cmp(b),
+            (Value::String(a), Value::String(b)) => a.partial_cmp(b),
+            (Value::Float(a), Value::Float(b)) => a.partial_cmp(b),
+            (Value::Boolean(a), Value::Boolean(b)) => a.partial_cmp(b),
+            _ => None,
+        }
+    }
+}
+
+impl Ord for Value {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+    }
+}
+
+
+#[derive(Clone, Debug)]
+pub enum Operator {
+    Eq,
+    NotEq,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+}
+
+#[derive(Clone, Debug)]
+pub struct Condition {
+    pub column: String,
+    pub operator: Operator,
+    pub value: Value,
+}
+
+#[derive(Clone, Debug)]
+pub enum Query {
+    MatchAll,
+    Condition(Condition),
+    And(Vec<Query>),
+    Or(Vec<Query>),
+}
+
 impl Eq for Value {}
 
 impl Hash for Value {
@@ -74,13 +123,13 @@ impl Hash for Value {
 }
 
 pub struct Database {
-    tables: HashMap<String, Table>,
+    tables: Arc<RwLock<HashMap<String, Table>>>,
 }
 
 impl Default for Database {
     fn default() -> Self {
         Self {
-            tables: HashMap::new(),
+            tables: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
@@ -89,17 +138,18 @@ impl Database {
     pub fn new() -> Self {
         Self::default()
     }
-    pub fn save(&self, path: &str) -> io::Result<()> {
+    pub async fn save(&self, path: &str) -> io::Result<()> {
         let start = Instant::now();
+        let tables = self.tables.read().await;
         let encoded: Vec<u8> =
-            bincode::serialize(&self.tables).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            bincode::serialize(&*tables).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         let mut file = File::create(path)?;
         file.write_all(&encoded)?;
         println!("Database saved in {:?}", start.elapsed());
         Ok(())
     }
 
-    pub fn load(&mut self, path: &str) -> io::Result<()> {
+    pub async fn load(&mut self, path: &str) -> io::Result<()> {
         let start = Instant::now();
         let mut file = File::open(path)?;
         let mut buffer = Vec::new();
@@ -108,38 +158,62 @@ impl Database {
         let tables: HashMap<String, Table> = bincode::deserialize(&buffer)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        self.tables = tables;
+        let mut self_tables = self.tables.write().await;
+        *self_tables = tables;
         println!("Database loaded in {:?}", start.elapsed());
         Ok(())
     }
-    pub fn create_table(
+    pub async fn create_table(
         &mut self,
         name: String,
         columns: Vec<Column>,
     ) -> Result<Duration, String> {
         let start = Instant::now();
-        if self.tables.contains_key(&name) {
+        let mut tables = self.tables.write().await;
+        if tables.contains_key(&name) {
             return Err(format!("Table {} already exists", name));
         }
-        self.tables.insert(
+        tables.insert(
             name.clone(),
             Table {
                 name,
                 columns,
                 data: Vec::new(),
+                indexes: HashMap::new(),
             },
         );
         Ok(start.elapsed())
     }
 
-    pub fn insert(
+    pub async fn create_index(&mut self, table_name: &str, column_name: &str) -> Result<(), String> {
+        let mut tables = self.tables.write().await;
+        let table = tables
+            .get_mut(table_name)
+            .ok_or_else(|| format!("Table {} not found", table_name))?;
+
+        if !table.columns.iter().any(|c| c.name == column_name) {
+            return Err(format!("Column {} not found", column_name));
+        }
+
+        let mut index = BTreeMap::new();
+        for (i, row) in table.data.iter().enumerate() {
+            if let Some(value) = row.get(column_name) {
+                index.entry(value.clone()).or_insert_with(Vec::new).push(i);
+            }
+        }
+
+        table.indexes.insert(column_name.to_string(), index);
+        Ok(())
+    }
+
+    pub async fn insert(
         &mut self,
         table_name: &str,
         row: HashMap<String, Value>,
     ) -> Result<Duration, String> {
         let start = Instant::now();
-        let table = self
-            .tables
+        let mut tables = self.tables.write().await;
+        let table = tables
             .get_mut(table_name)
             .ok_or_else(|| format!("Table {} not found", table_name))?;
 
@@ -149,65 +223,198 @@ impl Database {
             }
         }
 
+        let new_index = table.data.len();
+        for (col_name, index) in &mut table.indexes {
+            if let Some(value) = row.get(col_name) {
+                index.entry(value.clone()).or_insert_with(Vec::new).push(new_index);
+            }
+        }
+
         table.data.push(row);
         Ok(start.elapsed())
     }
 
-    pub fn select<F>(
+    pub async fn select(
         &self,
         table_name: &str,
-        conditions: Option<F>,
-    ) -> Result<(Vec<&HashMap<String, Value>>, Duration), String>
-    where
-        F: Fn(&HashMap<String, Value>) -> bool,
-    {
+        query: &Query,
+    ) -> Result<(Vec<HashMap<String, Value>>, Duration), String> {
         let start = Instant::now();
-        let table = self
-            .tables
+        let tables = self.tables.read().await;
+        let table = tables
             .get(table_name)
             .ok_or_else(|| format!("Table {} not found", table_name))?;
 
-        let results = match conditions {
-            Some(filter) => table.data.iter().filter(|row| filter(row)).collect(),
-            None => table.data.iter().collect(),
-        };
+        let results = self.execute_query(table, query);
 
-        Ok((results, start.elapsed()))
+        let rows = results.into_iter().map(|i| table.data[i].clone()).collect();
+
+        Ok((rows, start.elapsed()))
     }
 
-    pub fn update<C, U>(&mut self, table_name: &str, conditions: C, update_fn: U) -> Result<usize, String>
+    fn execute_query(&self, table: &Table, query: &Query) -> Vec<usize> {
+        match query {
+            Query::MatchAll => (0..table.data.len()).collect(),
+            Query::Condition(condition) => {
+                if let Some(index) = table.indexes.get(&condition.column) {
+                    let mut results = Vec::new();
+                    match condition.operator {
+                        Operator::Eq => {
+                            if let Some(indices) = index.get(&condition.value) {
+                                results.extend(indices);
+                            }
+                        }
+                        Operator::NotEq => {
+                            for (key, indices) in index.iter() {
+                                if *key != condition.value {
+                                    results.extend(indices);
+                                }
+                            }
+                        }
+                        Operator::Gt => {
+                            for (key, indices) in index.range(condition.value.clone()..) {
+                                if *key > condition.value {
+                                    results.extend(indices);
+                                }
+                            }
+                        }
+                        Operator::Gte => {
+                            for (key, indices) in index.range(condition.value.clone()..) {
+                                results.extend(indices);
+                            }
+                        }
+                        Operator::Lt => {
+                            for (key, indices) in index.range(..condition.value.clone()) {
+                                if *key < condition.value {
+                                    results.extend(indices);
+                                }
+                            }
+                        }
+                        Operator::Lte => {
+                            for (key, indices) in index.range(..=condition.value.clone()) {
+                                results.extend(indices);
+                            }
+                        }
+                    }
+                    results
+                } else {
+                    (0..table.data.len())
+                        .filter(|i| self.evaluate_condition(&table.data[*i], condition))
+                        .collect()
+                }
+            }
+            Query::And(queries) => {
+                if queries.is_empty() {
+                    return (0..table.data.len()).collect();
+                }
+                let mut result_sets: Vec<Vec<usize>> = queries
+                    .iter()
+                    .map(|q| self.execute_query(table, q))
+                    .collect();
+
+                result_sets.sort_by_key(|a| a.len());
+
+                let mut final_result = result_sets[0].clone();
+                for i in 1..result_sets.len() {
+                    let other_set: std::collections::HashSet<usize> = result_sets[i].iter().cloned().collect();
+                    final_result.retain(|item| other_set.contains(item));
+                }
+                final_result
+            }
+            Query::Or(queries) => {
+                let mut final_result = std::collections::HashSet::new();
+                for q in queries {
+                    let result_set = self.execute_query(table, q);
+                    final_result.extend(result_set);
+                }
+                final_result.into_iter().collect()
+            }
+        }
+    }
+
+    fn evaluate_condition(&self, row: &HashMap<String, Value>, condition: &Condition) -> bool {
+        if let Some(value) = row.get(&condition.column) {
+            match condition.operator {
+                Operator::Eq => value == &condition.value,
+                Operator::NotEq => value != &condition.value,
+                Operator::Gt => value > &condition.value,
+                Operator::Gte => value >= &condition.value,
+                Operator::Lt => value < &condition.value,
+                Operator::Lte => value <= &condition.value,
+            }
+        } else {
+            false
+        }
+    }
+
+    pub async fn update<U>(
+        &mut self,
+        table_name: &str,
+        query: &Query,
+        update_fn: U,
+    ) -> Result<usize, String>
     where
-        C: Fn(&HashMap<String, Value>) -> bool,
         U: Fn(&mut HashMap<String, Value>),
     {
-        let table = self
-            .tables
+        let mut tables = self.tables.write().await;
+        let table = tables
             .get_mut(table_name)
             .ok_or_else(|| format!("Table {} not found", table_name))?;
 
-        let mut updated_count = 0;
-        for row in &mut table.data {
-            if conditions(row) {
-                update_fn(row);
-                updated_count += 1;
+        let indices_to_update = self.execute_query(table, query);
+        let updated_count = indices_to_update.len();
+
+        for index in indices_to_update {
+            update_fn(&mut table.data[index]);
+        }
+
+        if updated_count > 0 {
+            for (col_name, index) in &mut table.indexes {
+                let mut new_index = BTreeMap::new();
+                for (i, row) in table.data.iter().enumerate() {
+                    if let Some(value) = row.get(col_name) {
+                        new_index.entry(value.clone()).or_insert_with(Vec::new).push(i);
+                    }
+                }
+                *index = new_index;
             }
         }
 
         Ok(updated_count)
     }
 
-    pub fn delete<F>(&mut self, table_name: &str, conditions: F) -> Result<usize, String>
-    where
-        F: Fn(&HashMap<String, Value>) -> bool,
-    {
-        let table = self
-            .tables
+    pub async fn delete(&mut self, table_name: &str, query: &Query) -> Result<usize, String> {
+        let mut tables = self.tables.write().await;
+        let table = tables
             .get_mut(table_name)
             .ok_or_else(|| format!("Table {} not found", table_name))?;
 
-        let initial_len = table.data.len();
-        table.data.retain(|row| !conditions(row));
+        let indices_to_delete = self.execute_query(table, query);
+        let deleted_count = indices_to_delete.len();
 
-        Ok(initial_len - table.data.len())
+        let mut indices_to_delete_set: std::collections::HashSet<usize> =
+            indices_to_delete.into_iter().collect();
+
+        let mut new_data = Vec::new();
+        for (i, row) in table.data.iter().enumerate() {
+            if !indices_to_delete_set.contains(&i) {
+                new_data.push(row.clone());
+            }
+        }
+        table.data = new_data;
+
+        if deleted_count > 0 {
+            for (col_name, index) in &mut table.indexes {
+                let mut new_index = BTreeMap::new();
+                for (i, row) in table.data.iter().enumerate() {
+                    if let Some(value) = row.get(col_name) {
+                        new_index.entry(value.clone()).or_insert_with(Vec::new).push(i);
+                    }
+                }
+                *index = new_index;
+            }
+        }
+
+        Ok(deleted_count)
     }
 }

@@ -1,37 +1,3 @@
-### zapdb
-
-zapdb is a lightweight database written in Rust. It offers basic database functionalities such as creating tables, inserting, updating, selecting, and deleting records.
-
-#### Features
-
-- Create tables with specified columns and data types
-- Insert, update, and delete records
-- Query records using custom filters
-- Load and save the database to a file
-- Asynchronous stuff
-
-#### Installation
-
-To use zapdb in your Rust project, add the following dependencies to your `Cargo.toml` file:
-
-```toml
-[dependencies]
-tokio = "1.42.0"
-zapdb = "0.1.1"
-```
-Or use the `cargo add` command:
-
-```bash
-cargo add zapdb tokio
-```
-
-
-#### Usage
-
-Here is a simple example demonstrating how to use zapdb:
-
-```rust
-
 use zapdb::{Column, DataType, Database, Value, Query, Condition, Operator};
 use std::collections::HashMap;
 
@@ -120,14 +86,3 @@ async fn main() {
 
     println!("Deleted {} users", deleted);
 }
-
-```
-
-#### Contribution
-
-Contributions are welcome! Feel free to open an issue or submit a pull request on GitHub.
-
-#### License
-
-This project is licensed under the GNU General Public License v3.0.  [LICENSE](https://github.com/Smartlinuxcoder/zapdb/blob/main/LICENSE)
-
