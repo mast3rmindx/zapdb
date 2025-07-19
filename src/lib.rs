@@ -250,11 +250,26 @@ pub struct Condition {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum JoinType {
+    Inner,
+    Left,
+    Right,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Join {
+    pub join_type: JoinType,
+    pub target_table: String,
+    pub on_condition: (String, String),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Query {
     MatchAll,
     Condition(Condition),
     And(Vec<Query>),
     Or(Vec<Query>),
+    Join(Join),
 }
 
 impl Eq for Value {}
@@ -633,15 +648,93 @@ impl Database {
             .get(table_name)
             .ok_or_else(|| format!("Table {} not found", table_name))?;
 
-        let results = self.execute_query(table, query);
+        let results = if let Query::Join(join) = query {
+            let target_table = tables
+                .get(&join.target_table)
+                .ok_or_else(|| format!("Table {} not found", join.target_table))?;
+            self.execute_join_query(table, target_table, join)
+        } else {
+            self.execute_query(table, query)
+                .into_iter()
+                .map(|i| table.data[i].clone())
+                .collect()
+        };
 
-        let rows = results.into_iter().map(|i| table.data[i].clone()).collect();
+        Ok((results, start.elapsed()))
+    }
 
-        Ok((rows, start.elapsed()))
+    fn execute_join_query(
+        &self,
+        left_table: &Table,
+        right_table: &Table,
+        join: &Join,
+    ) -> Vec<HashMap<String, Value>> {
+        let mut results = Vec::new();
+        let (left_col, right_col) = &join.on_condition;
+
+        match join.join_type {
+            JoinType::Inner => {
+                for left_row in &left_table.data {
+                    for right_row in &right_table.data {
+                        if left_row.get(left_col) == right_row.get(right_col) {
+                            let mut merged_row = left_row.clone();
+                            merged_row.extend(right_row.clone());
+                            results.push(merged_row);
+                        }
+                    }
+                }
+            }
+            JoinType::Left => {
+                for left_row in &left_table.data {
+                    let mut found_match = false;
+                    for right_row in &right_table.data {
+                        if left_row.get(left_col) == right_row.get(right_col) {
+                            let mut merged_row = left_row.clone();
+                            merged_row.extend(right_row.clone());
+                            results.push(merged_row);
+                            found_match = true;
+                        }
+                    }
+                    if !found_match {
+                        let mut merged_row = left_row.clone();
+                        for col in &right_table.columns {
+                            merged_row.insert(col.name.clone(), Value::Null);
+                        }
+                        results.push(merged_row);
+                    }
+                }
+            }
+            JoinType::Right => {
+                for right_row in &right_table.data {
+                    let mut found_match = false;
+                    for left_row in &left_table.data {
+                        if left_row.get(left_col) == right_row.get(right_col) {
+                            let mut merged_row = left_row.clone();
+                            merged_row.extend(right_row.clone());
+                            results.push(merged_row);
+                            found_match = true;
+                        }
+                    }
+                    if !found_match {
+                        let mut merged_row = right_row.clone();
+                        for col in &left_table.columns {
+                            merged_row.insert(col.name.clone(), Value::Null);
+                        }
+                        results.push(merged_row);
+                    }
+                }
+            }
+        }
+        results
     }
 
     fn execute_query(&self, table: &Table, query: &Query) -> Vec<usize> {
         match query {
+            Query::Join(_) => {
+                // This should be handled in the `select` function
+                // but we need to satisfy the compiler for now.
+                vec![]
+            }
             Query::MatchAll => (0..table.data.len()).collect(),
             Query::Condition(condition) => {
                 if let Some(index) = table.indexes.get(&condition.column) {
