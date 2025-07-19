@@ -69,7 +69,7 @@ pub enum DataType {
     Json,
 }
 
-use std::collections::BTreeMap;
+use dashmap::DashMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Operation {
@@ -152,7 +152,8 @@ pub struct Table {
     name: String,
     columns: Vec<Column>,
     data: Vec<HashMap<String, Value>>,
-    indexes: HashMap<String, BTreeMap<Value, Vec<usize>>>,
+    #[serde(skip)]
+    indexes: HashMap<String, DashMap<Value, Vec<usize>>>,
     #[serde(skip)]
     merkle_tree: Option<MerkleTree<Blake3Hasher>>,
 }
@@ -454,6 +455,18 @@ impl Database {
             let mut self_tables = self.tables.write().await;
             *self_tables = tables;
             for table in self_tables.values_mut() {
+                table.indexes = HashMap::new();
+                for col in &table.columns {
+                    if col.constraints.contains(&Constraint::Unique) {
+                        let index = DashMap::new();
+                        for (i, row) in table.data.iter().enumerate() {
+                            if let Some(value) = row.get(&col.name) {
+                                index.entry(value.clone()).or_insert_with(Vec::new).push(i);
+                            }
+                        }
+                        table.indexes.insert(col.name.clone(), index);
+                    }
+                }
                 table.build_merkle_tree();
             }
         }
@@ -541,7 +554,7 @@ impl Database {
             return Err(format!("Column {} not found", column_name));
         }
 
-        let mut index = BTreeMap::new();
+        let index = DashMap::new();
         for (i, row) in table.data.iter().enumerate() {
             if let Some(value) = row.get(column_name) {
                 index.entry(value.clone()).or_insert_with(Vec::new).push(i);
@@ -622,7 +635,7 @@ impl Database {
             .ok_or_else(|| format!("Table {} not found", table_name))?;
 
         let new_index = table.data.len();
-        for (col_name, index) in &mut table.indexes {
+        for (col_name, index) in &table.indexes {
             if let Some(value) = row.get(col_name) {
                 index.entry(value.clone()).or_insert_with(Vec::new).push(new_index);
             }
@@ -851,38 +864,42 @@ impl Database {
                     match condition.operator {
                         Operator::Eq => {
                             if let Some(indices) = index.get(&condition.value) {
-                                results.extend(indices);
+                                results.extend(indices.value().clone());
                             }
                         }
                         Operator::NotEq => {
-                            for (key, indices) in index.iter() {
-                                if *key != condition.value {
-                                    results.extend(indices);
+                            for item in index.iter() {
+                                if *item.key() != condition.value {
+                                    results.extend(item.value().clone());
                                 }
                             }
                         }
                         Operator::Gt => {
-                            for (_key, indices) in index.range(condition.value.clone()..) {
-                                if *_key > condition.value {
-                                    results.extend(indices);
+                            for item in index.iter() {
+                                if *item.key() > condition.value {
+                                    results.extend(item.value().clone());
                                 }
                             }
                         }
                         Operator::Gte => {
-                            for (_key, indices) in index.range(condition.value.clone()..) {
-                                results.extend(indices);
+                            for item in index.iter() {
+                                if *item.key() >= condition.value {
+                                    results.extend(item.value().clone());
+                                }
                             }
                         }
                         Operator::Lt => {
-                            for (key, indices) in index.range(..condition.value.clone()) {
-                                if *key < condition.value {
-                                    results.extend(indices);
+                            for item in index.iter() {
+                                if *item.key() < condition.value {
+                                    results.extend(item.value().clone());
                                 }
                             }
                         }
                         Operator::Lte => {
-                            for (_key, indices) in index.range(..=condition.value.clone()) {
-                                results.extend(indices);
+                            for item in index.iter() {
+                                if *item.key() <= condition.value {
+                                    results.extend(item.value().clone());
+                                }
                             }
                         }
                     }
@@ -996,14 +1013,13 @@ impl Database {
         }
 
         if updated_count > 0 {
-            for (col_name, index) in &mut table.indexes {
-                let mut new_index = BTreeMap::new();
+            for (col_name, index) in &table.indexes {
+                index.clear();
                 for (i, row) in table.data.iter().enumerate() {
                     if let Some(value) = row.get(col_name) {
-                        new_index.entry(value.clone()).or_insert_with(Vec::new).push(i);
+                        index.entry(value.clone()).or_insert_with(Vec::new).push(i);
                     }
                 }
-                *index = new_index;
             }
             table.build_merkle_tree();
         }
@@ -1056,14 +1072,13 @@ impl Database {
         table.data = new_data;
 
         if deleted_count > 0 {
-            for (col_name, index) in &mut table.indexes {
-                let mut new_index = BTreeMap::new();
+            for (col_name, index) in &table.indexes {
+                index.clear();
                 for (i, row) in table.data.iter().enumerate() {
                     if let Some(value) = row.get(col_name) {
-                        new_index.entry(value.clone()).or_insert_with(Vec::new).push(i);
+                        index.entry(value.clone()).or_insert_with(Vec::new).push(i);
                     }
                 }
-                *index = new_index;
             }
             table.build_merkle_tree();
         }
