@@ -17,12 +17,12 @@ mod tests {
         let mut row = HashMap::new();
         row.insert("id".to_string(), Value::Integer(1));
         row.insert("name".to_string(), Value::String("Alice".to_string()));
-        assert!(db.insert("users", row).await.is_ok());
+        assert!(db.insert("users", row, None).await.is_ok());
 
         let mut row = HashMap::new();
         row.insert("id".to_string(), Value::Null);
         row.insert("name".to_string(), Value::String("Bob".to_string()));
-        assert!(db.insert("users", row).await.is_err());
+        assert!(db.insert("users", row, None).await.is_err());
     }
 
     #[tokio::test]
