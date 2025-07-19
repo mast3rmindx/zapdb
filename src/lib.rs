@@ -4,13 +4,28 @@ use std::time::{Instant, Duration};
 use std::fs::File;
 use std::io::{self, Write, Read};
 use serde::{Serialize, Deserialize};
+use flate2::write::GzEncoder;
+use flate2::read::GzDecoder;
+use flate2::Compression;
 use tokio::sync::RwLock;
 use std::sync::Arc;
-use chacha20poly1305::{
-    aead::{Aead},
-    XChaCha20Poly1305, KeyInit,
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Nonce,
 };
 use rand::{rngs::OsRng, RngCore};
+use rs_merkle::{MerkleTree, Hasher as MerkleHasher};
+
+#[derive(Clone)]
+struct Blake3Hasher;
+
+impl MerkleHasher for Blake3Hasher {
+    type Hash = [u8; 32];
+
+    fn hash(data: &[u8]) -> [u8; 32] {
+        blake3::hash(data).into()
+    }
+}
 
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -35,12 +50,39 @@ pub enum DataType {
 
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Table {
     name: String,
     columns: Vec<Column>,
     data: Vec<HashMap<String, Value>>,
     indexes: HashMap<String, BTreeMap<Value, Vec<usize>>>,
+    #[serde(skip)]
+    merkle_tree: Option<MerkleTree<Blake3Hasher>>,
+}
+
+impl Table {
+    fn build_merkle_tree(&mut self) {
+        let mut leaves = Vec::new();
+        for row in &self.data {
+            let encoded_row = bincode::serialize(&row).unwrap();
+            leaves.push(Blake3Hasher::hash(&encoded_row));
+        }
+        self.merkle_tree = Some(MerkleTree::<Blake3Hasher>::from_leaves(&leaves));
+    }
+
+    pub fn verify_integrity(&self) -> bool {
+        if let Some(tree) = &self.merkle_tree {
+            let mut leaves = Vec::new();
+            for row in &self.data {
+                let encoded_row = bincode::serialize(&row).unwrap();
+                leaves.push(Blake3Hasher::hash(&encoded_row));
+            }
+            let new_tree = MerkleTree::<Blake3Hasher>::from_leaves(&leaves);
+            tree.root() == new_tree.root()
+        } else {
+            true
+        }
+    }
 }
 
 
@@ -128,7 +170,7 @@ impl Hash for Value {
 }
 
 pub struct Database {
-    tables: Arc<RwLock<HashMap<String, Table>>>,
+    pub tables: Arc<RwLock<HashMap<String, Table>>>,
     key: [u8; 32],
 }
 
@@ -145,12 +187,17 @@ impl Database {
         let encoded: Vec<u8> =
             bincode::serialize(&*tables).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
-        let cipher = XChaCha20Poly1305::new((&self.key).into());
-        let mut nonce = [0u8; 24];
-        OsRng.fill_bytes(&mut nonce);
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&encoded)?;
+        let compressed_data = encoder.finish()?;
+
+        let cipher = Aes256Gcm::new((&self.key).into());
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
 
         let ciphertext = cipher
-            .encrypt((&nonce).into(), encoded.as_slice())
+            .encrypt(nonce, compressed_data.as_slice())
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
         let mut file = File::create(path)?;
@@ -166,19 +213,26 @@ impl Database {
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
 
-        let cipher = XChaCha20Poly1305::new((&self.key).into());
-        let nonce = &buffer[..24];
-        let ciphertext = &buffer[24..];
+        let cipher = Aes256Gcm::new((&self.key).into());
+        let nonce = Nonce::from_slice(&buffer[..12]);
+        let ciphertext = &buffer[12..];
 
         let decrypted_data = cipher
-            .decrypt(nonce.into(), ciphertext)
+            .decrypt(nonce, ciphertext)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
-        let tables: HashMap<String, Table> = bincode::deserialize(&decrypted_data)
+        let mut decoder = GzDecoder::new(&decrypted_data[..]);
+        let mut decompressed_data = Vec::new();
+        decoder.read_to_end(&mut decompressed_data)?;
+
+        let tables: HashMap<String, Table> = bincode::deserialize(&decompressed_data)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
         let mut self_tables = self.tables.write().await;
         *self_tables = tables;
+        for table in self_tables.values_mut() {
+            table.build_merkle_tree();
+        }
         println!("Database loaded in {:?}", start.elapsed());
         Ok(())
     }
@@ -199,6 +253,7 @@ impl Database {
                 columns,
                 data: Vec::new(),
                 indexes: HashMap::new(),
+                merkle_tree: None,
             },
         );
         Ok(start.elapsed())
@@ -250,6 +305,7 @@ impl Database {
         }
 
         table.data.push(row);
+        table.build_merkle_tree();
         Ok(start.elapsed())
     }
 
@@ -291,14 +347,14 @@ impl Database {
                             }
                         }
                         Operator::Gt => {
-                            for (key, indices) in index.range(condition.value.clone()..) {
-                                if *key > condition.value {
+                            for (_key, indices) in index.range(condition.value.clone()..) {
+                                if *_key > condition.value {
                                     results.extend(indices);
                                 }
                             }
                         }
                         Operator::Gte => {
-                            for (key, indices) in index.range(condition.value.clone()..) {
+                            for (_key, indices) in index.range(condition.value.clone()..) {
                                 results.extend(indices);
                             }
                         }
@@ -310,7 +366,7 @@ impl Database {
                             }
                         }
                         Operator::Lte => {
-                            for (key, indices) in index.range(..=condition.value.clone()) {
+                            for (_key, indices) in index.range(..=condition.value.clone()) {
                                 results.extend(indices);
                             }
                         }
@@ -397,6 +453,7 @@ impl Database {
                 }
                 *index = new_index;
             }
+            table.build_merkle_tree();
         }
 
         Ok(updated_count)
@@ -411,7 +468,7 @@ impl Database {
         let indices_to_delete = self.execute_query(table, query);
         let deleted_count = indices_to_delete.len();
 
-        let mut indices_to_delete_set: std::collections::HashSet<usize> =
+        let indices_to_delete_set: std::collections::HashSet<usize> =
             indices_to_delete.into_iter().collect();
 
         let mut new_data = Vec::new();
@@ -432,8 +489,19 @@ impl Database {
                 }
                 *index = new_index;
             }
+            table.build_merkle_tree();
         }
 
         Ok(deleted_count)
+    }
+
+    pub async fn verify_integrity(&self) -> bool {
+        let tables = self.tables.read().await;
+        for table in tables.values() {
+            if !table.verify_integrity() {
+                return false;
+            }
+        }
+        true
     }
 }
