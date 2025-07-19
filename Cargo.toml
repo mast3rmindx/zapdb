@@ -18,6 +18,7 @@ flate2 = "1.0"
 rs_merkle = "1.2.0"
 aes-gcm = "0.10.3"
 blake3 = "1.5.1"
+sha3 = "0.10.8"
 
 [[example]]
 name = "example"
