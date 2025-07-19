@@ -13,7 +13,7 @@ This document lists recommended improvements and features for zapdb.
 
 ## Performance
 
-- **Concurrent Indexes:** Use concurrent data structures for indexes to improve performance for write-heavy workloads.
+- **Concurrent Indexes:** Use concurrent data structures for indexes to improve performance for write-heavy workloads. (DONE)
 - **Query Optimizer:** Implement a query optimizer to improve the performance of complex queries.
 - **Connection Pooling:** Implement a connection pool to reduce the overhead of creating new connections to the database.
 
