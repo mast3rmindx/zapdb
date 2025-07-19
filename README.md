@@ -35,6 +35,56 @@ To reduce the size of the database on disk, zapdb uses Gzip compression. The dat
 
 zapdb uses a Merkle tree to ensure the integrity of the data. A Merkle tree is a tree in which every leaf node is labelled with the hash of a data block and every non-leaf node is labelled with the cryptographic hash of the labels of its child nodes. This allows for efficient verification of the data integrity. You can verify the integrity of the database by calling the `verify_integrity` method on the `Database` struct.
 
+### Transactions
+
+zapdb supports ACID transactions. You can use transactions to group multiple operations into a single atomic unit. If any operation in the transaction fails, the entire transaction is rolled back.
+
+Here's an example of how to use transactions:
+
+```rust
+use zapdb::{Column, DataType, Database, Value, Query, Condition, Operator};
+use std::collections::HashMap;
+
+#[tokio::main]
+async fn main() {
+    // Create a new database with a 32-byte key for encryption.
+    let key = [0u8; 32];
+    let mut db = Database::new(key);
+
+    // Create a table.
+    db.create_table(
+        "users".to_string(),
+        vec![
+            Column::new("id".to_string(), DataType::Integer),
+            Column::new("name".to_string(), DataType::String),
+        ],
+    )
+    .await
+    .unwrap();
+
+    // Begin a new transaction.
+    let mut transaction = db.begin_transaction();
+
+    // Insert some data into the transaction.
+    let mut user1 = HashMap::new();
+    user1.insert("id".to_string(), Value::Integer(1));
+    user1.insert("name".to_string(), Value::String("Alice".to_string()));
+    transaction.insert("users".to_string(), user1);
+
+    let mut user2 = HashMap::new();
+    user2.insert("id".to_string(), Value::Integer(2));
+    user2.insert("name".to_string(), Value::String("Bob".to_string()));
+    transaction.insert("users".to_string(), user2);
+
+    // Commit the transaction.
+    db.commit(transaction).await.unwrap();
+
+    // Query the data.
+    let (users, _) = db.select("users", &Query::MatchAll).await.unwrap();
+    println!("{:?}", users);
+}
+```
+
 ### Installation
 
 Add zapdb to your `Cargo.toml`:
