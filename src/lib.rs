@@ -15,6 +15,9 @@ use aes_gcm::{
 };
 use rand::{rngs::OsRng, RngCore};
 use rs_merkle::{MerkleTree, Hasher as MerkleHasher};
+use chrono::{DateTime, Utc};
+use uuid::Uuid;
+use serde_json;
 
 #[derive(Clone)]
 struct Blake3Hasher;
@@ -46,6 +49,9 @@ pub enum DataType {
     String,
     Float,
     Boolean,
+    DateTime,
+    Uuid,
+    Json,
 }
 
 use std::collections::BTreeMap;
@@ -168,6 +174,9 @@ pub enum Value {
     String(String),
     Float(f64),
     Boolean(bool),
+    DateTime(DateTime<Utc>),
+    Uuid(Uuid),
+    Json(serde_json::Value),
     Null,
 }
 
@@ -178,6 +187,9 @@ impl PartialEq for Value {
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Float(a), Value::Float(b)) => (a - b).abs() < f64::EPSILON,
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
+            (Value::DateTime(a), Value::DateTime(b)) => a == b,
+            (Value::Uuid(a), Value::Uuid(b)) => a == b,
+            (Value::Json(a), Value::Json(b)) => a == b,
             (Value::Null, Value::Null) => true,
             _ => false,
         }
@@ -191,6 +203,8 @@ impl PartialOrd for Value {
             (Value::String(a), Value::String(b)) => a.partial_cmp(b),
             (Value::Float(a), Value::Float(b)) => a.partial_cmp(b),
             (Value::Boolean(a), Value::Boolean(b)) => a.partial_cmp(b),
+            (Value::DateTime(a), Value::DateTime(b)) => a.partial_cmp(b),
+            (Value::Uuid(a), Value::Uuid(b)) => a.partial_cmp(b),
             _ => None,
         }
     }
@@ -240,6 +254,12 @@ impl Hash for Value {
                 bits.hash(state);
             }
             Value::Boolean(b) => b.hash(state),
+            Value::DateTime(dt) => dt.hash(state),
+            Value::Uuid(u) => u.hash(state),
+            Value::Json(j) => {
+                let s = serde_json::to_string(j).unwrap_or_default();
+                s.hash(state);
+            }
             Value::Null => 0.hash(state),
         }
     }
@@ -496,7 +516,25 @@ impl Database {
             .ok_or_else(|| format!("Table {} not found", table_name))?;
 
         for col in &table.columns {
-            if !row.contains_key(&col.name) {
+            if let Some(value) = row.get(&col.name) {
+                let type_matches = match (&col.data_type, value) {
+                    (DataType::Integer, Value::Integer(_)) => true,
+                    (DataType::String, Value::String(_)) => true,
+                    (DataType::Float, Value::Float(_)) => true,
+                    (DataType::Boolean, Value::Boolean(_)) => true,
+                    (DataType::DateTime, Value::DateTime(_)) => true,
+                    (DataType::Uuid, Value::Uuid(_)) => true,
+                    (DataType::Json, Value::Json(_)) => true,
+                    (_, Value::Null) => true, // Assuming null is allowed for any type
+                    _ => false,
+                };
+                if !type_matches {
+                    return Err(format!(
+                        "Invalid data type for column {}: expected {:?}, got {:?}",
+                        col.name, col.data_type, value
+                    ));
+                }
+            } else {
                 return Err(format!("Missing column: {}", col.name));
             }
         }
