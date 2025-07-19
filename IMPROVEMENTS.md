@@ -4,16 +4,16 @@ This document lists recommended improvements and features for zapdb.
 
 ## Core Database
 
-- **Transactions:** Add support for ACID transactions to ensure data consistency.
-- **Durability:** Implement a write-ahead log (WAL) to ensure that data is not lost in the event of a crash.
-- **More Data Types:** Add support for more data types, such as `DateTime`, `UUID`, and `JSON`.
-- **Constraints:** Add support for constraints, such as `NOT NULL`, `UNIQUE`, and `FOREIGN KEY`.
-- **Joins:** Implement support for `JOIN` operations to query data from multiple tables.
-- **Aggregation:** Add support for aggregate functions, such as `COUNT`, `SUM`, `AVG`, `MIN`, and `MAX`.
+- **Transactions:** Add support for ACID transactions to ensure data consistency. (DONE)
+- **Durability:** Implement a write-ahead log (WAL) to ensure that data is not lost in the event of a crash. (DONE)
+- **More Data Types:** Add support for more data types, such as `DateTime`, `UUID`, and `JSON`. (DONE)
+- **Constraints:** Add support for constraints, such as `NOT NULL`, `UNIQUE`, and `FOREIGN KEY`. (DONE)
+- **Joins:** Implement support for `JOIN` operations to query data from multiple tables. (DONE)
+- **Aggregation:** Add support for aggregate functions, such as `COUNT`, `SUM`, `AVG`, `MIN`, and `MAX`. (DONE)
 
 ## Performance
 
-- **Concurrent Indexes:** Use concurrent data structures for indexes to improve performance for write-heavy workloads.
+- **Concurrent Indexes:** Use concurrent data structures for indexes to improve performance for write-heavy workloads. (DONE)
 - **Query Optimizer:** Implement a query optimizer to improve the performance of complex queries.
 - **Connection Pooling:** Implement a connection pool to reduce the overhead of creating new connections to the database.
 

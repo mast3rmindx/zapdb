@@ -10,7 +10,7 @@ zapdb is a lightweight, in-memory, SQL-like database written in Rust. It's desig
 - **Encryption:** Secures your data at rest with AES-256-GCM encryption.
 - **Compression:** Reduces the on-disk footprint of your database with Gzip compression.
 - **Data Integrity:** Ensures data integrity with a Blake3-based Merkle tree.
-- **Indexing:** Speeds up queries with B-Tree indexes.
+- **Indexing:** Speeds up queries with concurrent hash map indexes.
 - **Constraints:** Supports `NOT NULL`, `UNIQUE`, and `FOREIGN KEY` constraints.
 - **Transactions:** Provides ACID transactions to ensure data consistency.
 - **Joins:** Supports `INNER`, `LEFT`, and `RIGHT` joins to query data from multiple tables.
