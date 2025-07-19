@@ -6,7 +6,7 @@ mod tests {
     #[tokio::test]
     async fn test_transaction_commit() {
         let key = [0u8; 32];
-        let mut db = Database::new(key);
+        let mut db = Database::new(key, "test_transactions.wal");
 
         db.create_table(
             "users".to_string(),
@@ -39,7 +39,7 @@ mod tests {
     #[tokio::test]
     async fn test_transaction_rollback() {
         let key = [0u8; 32];
-        let mut db = Database::new(key);
+        let mut db = Database::new(key, "test_transactions_rollback.wal");
 
         db.create_table(
             "users".to_string(),
