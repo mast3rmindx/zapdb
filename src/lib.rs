@@ -6,7 +6,7 @@ use std::io::{self, Write, Read};
 use serde::{Serialize, Deserialize};
 
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct Column {
     pub name: String,
     pub data_type: DataType,
@@ -18,7 +18,7 @@ impl Column {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum DataType {
     Integer,
     String,
@@ -43,40 +43,80 @@ pub enum Value {
     Null,
 }
 
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Integer(a), Value::Integer(b)) => a == b,
+            (Value::String(a), Value::String(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => (a - b).abs() < f64::EPSILON,
+            (Value::Boolean(a), Value::Boolean(b)) => a == b,
+            (Value::Null, Value::Null) => true,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Value {}
+
+impl Hash for Value {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Value::Integer(i) => i.hash(state),
+            Value::String(s) => s.hash(state),
+            Value::Float(f) => {
+                let bits = f.to_bits();
+                bits.hash(state);
+            }
+            Value::Boolean(b) => b.hash(state),
+            Value::Null => 0.hash(state),
+        }
+    }
+}
+
 pub struct Database {
     tables: HashMap<String, Table>,
 }
 
-impl Database {
-    pub fn new() -> Self {
-        Database {
+impl Default for Database {
+    fn default() -> Self {
+        Self {
             tables: HashMap::new(),
         }
     }
-    pub async fn save(&self, path: &str) -> io::Result<()> {
+}
+
+impl Database {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn save(&self, path: &str) -> io::Result<()> {
         let start = Instant::now();
-        let encoded: Vec<u8> = bincode::serialize(&self.tables).unwrap();
+        let encoded: Vec<u8> =
+            bincode::serialize(&self.tables).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         let mut file = File::create(path)?;
         file.write_all(&encoded)?;
-
         println!("Database saved in {:?}", start.elapsed());
         Ok(())
     }
 
-    pub async fn load(&mut self, path: &str) -> io::Result<()> {
+    pub fn load(&mut self, path: &str) -> io::Result<()> {
         let start = Instant::now();
         let mut file = File::open(path)?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
-    
+
         let tables: HashMap<String, Table> = bincode::deserialize(&buffer)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        
+
         self.tables = tables;
         println!("Database loaded in {:?}", start.elapsed());
         Ok(())
     }
-    pub fn create_table(&mut self, name: String, columns: Vec<Column>) -> Result<(), String> {
+    pub fn create_table(
+        &mut self,
+        name: String,
+        columns: Vec<Column>,
+    ) -> Result<Duration, String> {
         let start = Instant::now();
         if self.tables.contains_key(&name) {
             return Err(format!("Table {} already exists", name));
@@ -89,12 +129,14 @@ impl Database {
                 data: Vec::new(),
             },
         );
-
-        println!("Table created in {:?}", start.elapsed());
-        Ok(())
+        Ok(start.elapsed())
     }
 
-    pub fn insert(&mut self, table_name: &str, row: HashMap<String, Value>) -> Result<(), String> {
+    pub fn insert(
+        &mut self,
+        table_name: &str,
+        row: HashMap<String, Value>,
+    ) -> Result<Duration, String> {
         let start = Instant::now();
         let table = self
             .tables
@@ -108,16 +150,17 @@ impl Database {
         }
 
         table.data.push(row);
-
-        println!("Row inserted in {:?}", start.elapsed());
-        Ok(())
+        Ok(start.elapsed())
     }
 
-    pub fn select(
+    pub fn select<F>(
         &self,
         table_name: &str,
-        conditions: Option<fn(&HashMap<String, Value>) -> bool>,
-    ) -> Result<Vec<&HashMap<String, Value>>, String> {
+        conditions: Option<F>,
+    ) -> Result<(Vec<&HashMap<String, Value>>, Duration), String>
+    where
+        F: Fn(&HashMap<String, Value>) -> bool,
+    {
         let start = Instant::now();
         let table = self
             .tables
@@ -129,16 +172,14 @@ impl Database {
             None => table.data.iter().collect(),
         };
 
-        println!("Rows selected in {:?}", start.elapsed());
-        Ok(results)
+        Ok((results, start.elapsed()))
     }
 
-    pub fn update(
-        &mut self,
-        table_name: &str,
-        conditions: fn(&HashMap<String, Value>) -> bool,
-        update_fn: fn(&mut HashMap<String, Value>),
-    ) -> Result<usize, String> {
+    pub fn update<C, U>(&mut self, table_name: &str, conditions: C, update_fn: U) -> Result<usize, String>
+    where
+        C: Fn(&HashMap<String, Value>) -> bool,
+        U: Fn(&mut HashMap<String, Value>),
+    {
         let table = self
             .tables
             .get_mut(table_name)
@@ -155,11 +196,10 @@ impl Database {
         Ok(updated_count)
     }
 
-    pub fn delete(
-        &mut self,
-        table_name: &str,
-        conditions: fn(&HashMap<String, Value>) -> bool,
-    ) -> Result<usize, String> {
+    pub fn delete<F>(&mut self, table_name: &str, conditions: F) -> Result<usize, String>
+    where
+        F: Fn(&HashMap<String, Value>) -> bool,
+    {
         let table = self
             .tables
             .get_mut(table_name)
