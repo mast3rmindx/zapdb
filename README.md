@@ -13,6 +13,7 @@ zapdb is a lightweight, in-memory, SQL-like database written in Rust. It's desig
 - **Indexing:** Speeds up queries with B-Tree indexes.
 - **Constraints:** Supports `NOT NULL`, `UNIQUE`, and `FOREIGN KEY` constraints.
 - **Transactions:** Provides ACID transactions to ensure data consistency.
+- **Joins:** Supports `INNER`, `LEFT`, and `RIGHT` joins to query data from multiple tables.
 
 ## Getting Started
 
@@ -68,6 +69,28 @@ async fn main() {
 
     // Verify the integrity of the database.
     assert!(new_db.verify_integrity().await);
+}
+```
+
+### Joins
+
+zapdb supports `INNER`, `LEFT`, and `RIGHT` joins. Here's an example of how to perform a `LEFT JOIN`:
+
+```rust
+use zapdb::{Database, Query, Join, JoinType};
+
+async fn join_example() {
+    let mut db = Database::new([0; 32], "join_example.wal");
+    // ... (create tables and insert data)
+
+    let join = Join {
+        join_type: JoinType::Left,
+        target_table: "posts".to_string(),
+        on_condition: ("id".to_string(), "user_id".to_string()),
+    };
+
+    let (results, _) = db.select("users", &Query::Join(join)).await.unwrap();
+    println!("{:?}", results);
 }
 ```
 
