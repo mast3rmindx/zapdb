@@ -346,6 +346,10 @@ pub struct Database {
     query_planner: QueryPlanner,
 }
 
+pub fn begin_transaction() -> Transaction {
+    Transaction::new()
+}
+
 impl Database {
     fn new(key: [u8; 32], wal_path: &str) -> Self {
         Self {
@@ -355,6 +359,54 @@ impl Database {
             wal_path: wal_path.to_string(),
             query_planner: QueryPlanner::new(),
         }
+    }
+
+    pub async fn commit(&self, transaction: Transaction) -> Result<(), String> {
+        let mut wal_writer = self.wal_writer.write().await;
+        for (op, _) in &transaction.operations {
+            let wal_entry = match op {
+                Operation::Insert { table_name, row } => WalEntry::Insert {
+                    table_name: table_name.clone(),
+                    row: row.clone(),
+                },
+                Operation::Update { table_name, query } => WalEntry::Update {
+                    table_name: table_name.clone(),
+                    query: query.clone(),
+                },
+                Operation::Delete { table_name, query } => WalEntry::Delete {
+                    table_name: table_name.clone(),
+                    query: query.clone(),
+                },
+            };
+            wal_writer.log(&wal_entry).map_err(|e| e.to_string())?;
+        }
+
+        let mut tables = self.tables.write().await;
+        let original_tables = tables.clone();
+
+        for (op, update_fn) in transaction.operations {
+            let result = match op {
+                Operation::Insert { table_name, row } => {
+                    self.insert_internal(&mut tables, &table_name, row)
+                }
+                Operation::Update { table_name, query } => self
+                    .update_internal(&mut tables, &table_name, &query, update_fn.unwrap())
+                    .map(|_| ()),
+                Operation::Delete { table_name, query } => self
+                    .delete_internal(&mut tables, &table_name, &query)
+                    .map(|_| ()),
+            };
+            if result.is_err() {
+                *tables = original_tables;
+                return Err(result.unwrap_err());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn rollback(&self, _transaction: Transaction) {
+        // No-op for now, as commit will handle rollback on failure.
+        // This can be expanded later if needed.
     }
 
     pub async fn save(&self, path: &str) -> io::Result<()> {

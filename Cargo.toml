@@ -44,3 +44,7 @@ path = "tests/test_db.rs"
 [[test]]
 name = "test_new_data_types"
 path = "tests/test_new_data_types.rs"
+
+[[test]]
+name = "test_transactions"
+path = "tests/test_transactions.rs"
