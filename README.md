@@ -94,6 +94,36 @@ async fn join_example() {
 }
 ```
 
+### Aggregation
+
+zapdb supports the following aggregate functions:
+
+- `COUNT`: Counts the number of rows.
+- `SUM`: Calculates the sum of a numeric column.
+- `AVG`: Calculates the average of a numeric column.
+- `MIN`: Finds the minimum value in a column.
+- `MAX`: Finds the maximum value in a column.
+
+Here's an example of how to use the `COUNT` function:
+
+```rust
+use zapdb::{Database, Query, AggregateQuery, AggregateFunction};
+
+async fn aggregate_example() {
+    let mut db = Database::new([0; 32], "aggregate_example.wal");
+    // ... (create tables and insert data)
+
+    let query = Query::Aggregate(AggregateQuery {
+        function: AggregateFunction::Count,
+        column: "id".to_string(),
+        filter: None,
+    });
+
+    let (results, _) = db.select("users", &query).await.unwrap();
+    println!("{:?}", results);
+}
+```
+
 ## How It Works
 
 ### Encryption
