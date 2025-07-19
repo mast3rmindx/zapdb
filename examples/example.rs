@@ -77,6 +77,10 @@ async fn main() {
     // Saving the database
     db.save("database.zap").await.unwrap();
 
+    // Verify integrity
+    assert!(db.verify_integrity().await);
+    println!("Database integrity verified.");
+
     // Deleting records
     let delete_query = Query::Condition(Condition {
         column: "name".to_string(),
