@@ -16,10 +16,10 @@ use serde_json::json;
 async fn test_new_data_types() {
     let mut db = Database::new([0; 32], "test_new_data_types.wal");
     let columns = vec![
-        Column::new("id".to_string(), DataType::Integer),
-        Column::new("created_at".to_string(), DataType::DateTime),
-        Column::new("uuid".to_string(), DataType::Uuid),
-        Column::new("data".to_string(), DataType::Json),
+        Column::new("id".to_string(), DataType::Integer, vec![]),
+        Column::new("created_at".to_string(), DataType::DateTime, vec![]),
+        Column::new("uuid".to_string(), DataType::Uuid, vec![]),
+        Column::new("data".to_string(), DataType::Json, vec![]),
     ];
     db.create_table("test".to_string(), columns).await.unwrap();
 

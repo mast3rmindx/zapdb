@@ -32,14 +32,29 @@ impl MerkleHasher for Blake3Hasher {
 
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum Constraint {
+    NotNull,
+    Unique,
+    ForeignKey {
+        table: String,
+        column: String,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct Column {
     pub name: String,
     pub data_type: DataType,
+    pub constraints: Vec<Constraint>,
 }
 
 impl Column {
-    pub fn new(name: String, data_type: DataType) -> Self {
-        Column { name, data_type }
+    pub fn new(name: String, data_type: DataType, constraints: Vec<Constraint>) -> Self {
+        Column {
+            name,
+            data_type,
+            constraints,
+        }
     }
 }
 
@@ -511,12 +526,40 @@ impl Database {
         table_name: &str,
         row: HashMap<String, Value>,
     ) -> Result<(), String> {
+        // First, check all constraints
         let table = tables
-            .get_mut(table_name)
+            .get(table_name)
             .ok_or_else(|| format!("Table {} not found", table_name))?;
 
         for col in &table.columns {
-            if let Some(value) = row.get(&col.name) {
+            let value = row.get(&col.name);
+
+            for constraint in &col.constraints {
+                match constraint {
+                    Constraint::NotNull => {
+                        if value.is_none() || value == Some(&Value::Null) {
+                            return Err(format!("Column {} cannot be null", col.name));
+                        }
+                    }
+                    Constraint::Unique => {
+                        if let Some(val) = value {
+                            if table.data.iter().any(|r| r.get(&col.name) == Some(val)) {
+                                return Err(format!("Column {} must be unique", col.name));
+                            }
+                        }
+                    }
+                    Constraint::ForeignKey { table: fk_table, column: fk_column } => {
+                        if let Some(val) = value {
+                            let foreign_table = tables.get(fk_table).ok_or_else(|| format!("Foreign key table {} not found", fk_table))?;
+                            if !foreign_table.data.iter().any(|r| r.get(fk_column) == Some(val)) {
+                                return Err(format!("Foreign key violation on column {}", col.name));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(value) = value {
                 let type_matches = match (&col.data_type, value) {
                     (DataType::Integer, Value::Integer(_)) => true,
                     (DataType::String, Value::String(_)) => true,
@@ -525,7 +568,7 @@ impl Database {
                     (DataType::DateTime, Value::DateTime(_)) => true,
                     (DataType::Uuid, Value::Uuid(_)) => true,
                     (DataType::Json, Value::Json(_)) => true,
-                    (_, Value::Null) => true, // Assuming null is allowed for any type
+                    (_, Value::Null) => true,
                     _ => false,
                 };
                 if !type_matches {
@@ -534,10 +577,17 @@ impl Database {
                         col.name, col.data_type, value
                     ));
                 }
+            } else if !col.constraints.contains(&Constraint::NotNull) {
+                // Allow missing columns if they are nullable
             } else {
                 return Err(format!("Missing column: {}", col.name));
             }
         }
+
+        // If all constraints are satisfied, perform the insertion
+        let table = tables
+            .get_mut(table_name)
+            .ok_or_else(|| format!("Table {} not found", table_name))?;
 
         let new_index = table.data.len();
         for (col_name, index) in &mut table.indexes {
@@ -692,12 +742,52 @@ impl Database {
         query: &Query,
         update_fn: fn(&mut HashMap<String, Value>),
     ) -> Result<usize, String> {
+        // First, check all constraints
         let table = tables
-            .get_mut(table_name)
+            .get(table_name)
             .ok_or_else(|| format!("Table {} not found", table_name))?;
 
         let indices_to_update = self.execute_query(table, query);
         let updated_count = indices_to_update.len();
+
+        for index in &indices_to_update {
+            let mut updated_row = table.data[*index].clone();
+            update_fn(&mut updated_row);
+
+            for col in &table.columns {
+                let value = updated_row.get(&col.name);
+
+                for constraint in &col.constraints {
+                    match constraint {
+                        Constraint::NotNull => {
+                            if value.is_none() || value == Some(&Value::Null) {
+                                return Err(format!("Column {} cannot be null", col.name));
+                            }
+                        }
+                        Constraint::Unique => {
+                            if let Some(val) = value {
+                                if table.data.iter().enumerate().any(|(i, r)| i != *index && r.get(&col.name) == Some(val)) {
+                                    return Err(format!("Column {} must be unique", col.name));
+                                }
+                            }
+                        }
+                        Constraint::ForeignKey { table: fk_table, column: fk_column } => {
+                            if let Some(val) = value {
+                                let foreign_table = tables.get(fk_table).ok_or_else(|| format!("Foreign key table {} not found", fk_table))?;
+                                if !foreign_table.data.iter().any(|r| r.get(fk_column) == Some(val)) {
+                                    return Err(format!("Foreign key violation on column {}", col.name));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // If all constraints are satisfied, perform the update
+        let table = tables
+            .get_mut(table_name)
+            .ok_or_else(|| format!("Table {} not found", table_name))?;
 
         for index in indices_to_update {
             update_fn(&mut table.data[index]);

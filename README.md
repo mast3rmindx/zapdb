@@ -11,83 +11,12 @@ zapdb is a lightweight, in-memory, SQL-like database written in Rust. It's desig
 - **Compression:** Reduces the on-disk footprint of your database with Gzip compression.
 - **Data Integrity:** Ensures data integrity with a Blake3-based Merkle tree.
 - **Indexing:** Speeds up queries with B-Tree indexes.
+- **Constraints:** Supports `NOT NULL`, `UNIQUE`, and `FOREIGN KEY` constraints.
+- **Transactions:** Provides ACID transactions to ensure data consistency.
 
 ## Getting Started
 
-- Create tables with specified columns and data types
-- Insert, update, and delete records
-- Query records using custom filters
-- Load and save the database to a file
-- Asynchronous stuff
-- Encryption support
-- Gzip compression
-- Merkle tree for data integrity
-
-### Encryption
-
-zapdb supports encryption out of the box. To use it, you need to provide a 32-byte key to the `Database::new` function. The database will then be encrypted when saved to a file and decrypted when loaded. The current encryption algorithm is XChaCha20-Poly1305, but it will be updated to AES-256-GCM in a future release.
-
-### Compression
-
-To reduce the size of the database on disk, zapdb uses Gzip compression. The data is compressed before being encrypted and saved to a file, and decompressed after being loaded and decrypted.
-
-### Data Integrity
-
-zapdb uses a Merkle tree to ensure the integrity of the data. A Merkle tree is a tree in which every leaf node is labelled with the hash of a data block and every non-leaf node is labelled with the cryptographic hash of the labels of its child nodes. This allows for efficient verification of the data integrity. You can verify the integrity of the database by calling the `verify_integrity` method on the `Database` struct.
-
-### Transactions
-
-zapdb supports ACID transactions. You can use transactions to group multiple operations into a single atomic unit. If any operation in the transaction fails, the entire transaction is rolled back.
-
-Here's an example of how to use transactions:
-
-```rust
-use zapdb::{Column, DataType, Database, Value, Query, Condition, Operator};
-use std::collections::HashMap;
-
-#[tokio::main]
-async fn main() {
-    // Create a new database with a 32-byte key for encryption.
-    let key = [0u8; 32];
-    let mut db = Database::new(key);
-
-    // Create a table.
-    db.create_table(
-        "users".to_string(),
-        vec![
-            Column::new("id".to_string(), DataType::Integer),
-            Column::new("name".to_string(), DataType::String),
-        ],
-    )
-    .await
-    .unwrap();
-
-    // Begin a new transaction.
-    let mut transaction = db.begin_transaction();
-
-    // Insert some data into the transaction.
-    let mut user1 = HashMap::new();
-    user1.insert("id".to_string(), Value::Integer(1));
-    user1.insert("name".to_string(), Value::String("Alice".to_string()));
-    transaction.insert("users".to_string(), user1);
-
-    let mut user2 = HashMap::new();
-    user2.insert("id".to_string(), Value::Integer(2));
-    user2.insert("name".to_string(), Value::String("Bob".to_string()));
-    transaction.insert("users".to_string(), user2);
-
-    // Commit the transaction.
-    db.commit(transaction).await.unwrap();
-
-    // Query the data.
-    let (users, _) = db.select("users", &Query::MatchAll).await.unwrap();
-    println!("{:?}", users);
-}
-```
-
-### Installation
-
-Add zapdb to your `Cargo.toml`:
+To get started with zapdb, add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -100,21 +29,21 @@ tokio = { version = "1", features = ["full"] }
 Here's a quick example of how to use zapdb:
 
 ```rust
-use zapdb::{Column, DataType, Database, Value, Query, Condition, Operator};
+use zapdb::{Column, DataType, Database, Value, Query, Condition, Operator, Constraint};
 use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() {
     // Create a new database with a 32-byte key for encryption.
     let key = [0u8; 32];
-    let mut db = Database::new(key);
+    let mut db = Database::new(key, "database.wal");
 
-    // Create a table.
+    // Create a table with constraints.
     db.create_table(
         "users".to_string(),
         vec![
-            Column::new("id".to_string(), DataType::Integer),
-            Column::new("name".to_string(), DataType::String),
+            Column::new("id".to_string(), DataType::Integer, vec![Constraint::NotNull, Constraint::Unique]),
+            Column::new("name".to_string(), DataType::String, vec![Constraint::NotNull]),
         ],
     )
     .await
@@ -134,7 +63,7 @@ async fn main() {
     db.save("my_database.zap").await.unwrap();
 
     // Load the database from a file.
-    let mut new_db = Database::new(key);
+    let mut new_db = Database::new(key, "database.wal");
     new_db.load("my_database.zap").await.unwrap();
 
     // Verify the integrity of the database.
