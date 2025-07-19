@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use zapdb::{Database, Column, DataType, Value, Query};
+    use zapdb::{Database, Column, DataType, Value, Query, Constraint};
     use std::collections::HashMap;
 
     #[tokio::test]
@@ -11,8 +11,8 @@ mod tests {
         db.create_table(
             "users".to_string(),
             vec![
-                Column::new("id".to_string(), DataType::Integer),
-                Column::new("name".to_string(), DataType::String),
+                Column::new("id".to_string(), DataType::Integer, vec![]),
+                Column::new("name".to_string(), DataType::String, vec![Constraint::NotNull]),
             ],
         )
         .await
@@ -44,8 +44,8 @@ mod tests {
         db.create_table(
             "users".to_string(),
             vec![
-                Column::new("id".to_string(), DataType::Integer),
-                Column::new("name".to_string(), DataType::String),
+                Column::new("id".to_string(), DataType::Integer, vec![]),
+                Column::new("name".to_string(), DataType::String, vec![Constraint::NotNull]),
             ],
         )
         .await

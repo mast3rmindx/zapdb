@@ -15,9 +15,9 @@ async fn main() {
     db.create_table(
         "users".to_string(),
         vec![
-            Column::new("id".to_string(), DataType::Integer),
-            Column::new("name".to_string(), DataType::String),
-            Column::new("age".to_string(), DataType::Integer),
+            Column::new("id".to_string(), DataType::Integer, vec![]),
+            Column::new("name".to_string(), DataType::String, vec![]),
+            Column::new("age".to_string(), DataType::Integer, vec![]),
         ],
     )
     .await

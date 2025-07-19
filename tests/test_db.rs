@@ -1,8 +1,78 @@
 #[cfg(test)]
 mod tests {
-    use zapdb::{Database, Column, DataType, Value, Query};
+    use zapdb::{Database, Column, DataType, Value, Query, Constraint};
     use std::collections::HashMap;
     use std::fs;
+
+    #[tokio::test]
+    async fn test_not_null_constraint() {
+        let mut db = Database::new([0; 32], "test_not_null_constraint.wal");
+        let columns = vec![
+            Column::new("id".to_string(), DataType::Integer, vec![Constraint::NotNull]),
+            Column::new("name".to_string(), DataType::String, vec![]),
+        ];
+        db.create_table("users".to_string(), columns).await.unwrap();
+
+        let mut row = HashMap::new();
+        row.insert("id".to_string(), Value::Integer(1));
+        row.insert("name".to_string(), Value::String("Alice".to_string()));
+        assert!(db.insert("users", row).await.is_ok());
+
+        let mut row = HashMap::new();
+        row.insert("id".to_string(), Value::Null);
+        row.insert("name".to_string(), Value::String("Bob".to_string()));
+        assert!(db.insert("users", row).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_unique_constraint() {
+        let mut db = Database::new([0; 32], "test_unique_constraint.wal");
+        let columns = vec![
+            Column::new("id".to_string(), DataType::Integer, vec![Constraint::Unique]),
+            Column::new("name".to_string(), DataType::String, vec![]),
+        ];
+        db.create_table("users".to_string(), columns).await.unwrap();
+
+        let mut row = HashMap::new();
+        row.insert("id".to_string(), Value::Integer(1));
+        row.insert("name".to_string(), Value::String("Alice".to_string()));
+        assert!(db.insert("users", row).await.is_ok());
+
+        let mut row = HashMap::new();
+        row.insert("id".to_string(), Value::Integer(1));
+        row.insert("name".to_string(), Value::String("Bob".to_string()));
+        assert!(db.insert("users", row).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_foreign_key_constraint() {
+        let mut db = Database::new([0; 32], "test_foreign_key_constraint.wal");
+
+        let users_columns = vec![
+            Column::new("id".to_string(), DataType::Integer, vec![Constraint::Unique]),
+        ];
+        db.create_table("users".to_string(), users_columns).await.unwrap();
+
+        let posts_columns = vec![
+            Column::new("id".to_string(), DataType::Integer, vec![]),
+            Column::new("user_id".to_string(), DataType::Integer, vec![Constraint::ForeignKey { table: "users".to_string(), column: "id".to_string() }]),
+        ];
+        db.create_table("posts".to_string(), posts_columns).await.unwrap();
+
+        let mut user_row = HashMap::new();
+        user_row.insert("id".to_string(), Value::Integer(1));
+        assert!(db.insert("users", user_row).await.is_ok());
+
+        let mut post_row = HashMap::new();
+        post_row.insert("id".to_string(), Value::Integer(1));
+        post_row.insert("user_id".to_string(), Value::Integer(1));
+        assert!(db.insert("posts", post_row).await.is_ok());
+
+        let mut post_row = HashMap::new();
+        post_row.insert("id".to_string(), Value::Integer(2));
+        post_row.insert("user_id".to_string(), Value::Integer(2));
+        assert!(db.insert("posts", post_row).await.is_err());
+    }
 
     #[tokio::test]
     async fn test_save_load_with_compression_and_integrity_check() {
@@ -15,8 +85,8 @@ mod tests {
         db.create_table(
             "users".to_string(),
             vec![
-                Column::new("id".to_string(), DataType::Integer),
-                Column::new("name".to_string(), DataType::String),
+                Column::new("id".to_string(), DataType::Integer, vec![]),
+                Column::new("name".to_string(), DataType::String, vec![]),
             ],
         )
         .await
@@ -64,8 +134,8 @@ mod tests {
         db.create_table(
             "users".to_string(),
             vec![
-                Column::new("id".to_string(), DataType::Integer),
-                Column::new("name".to_string(), DataType::String),
+                Column::new("id".to_string(), DataType::Integer, vec![]),
+                Column::new("name".to_string(), DataType::String, vec![]),
             ],
         )
         .await
