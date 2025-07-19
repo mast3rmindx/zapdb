@@ -50,6 +50,61 @@ pub enum DataType {
 
 use std::collections::BTreeMap;
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Operation {
+    Insert {
+        table_name: String,
+        row: HashMap<String, Value>,
+    },
+    Update {
+        table_name: String,
+        query: Query,
+        // update_fn is not serializable, so we'll handle it differently
+    },
+    Delete {
+        table_name: String,
+        query: Query,
+    },
+}
+
+#[derive(Clone)]
+pub struct Transaction {
+    operations: Vec<(Operation, Option<fn(&mut HashMap<String, Value>)>)>,
+}
+
+impl Transaction {
+    pub fn new() -> Self {
+        Self {
+            operations: Vec::new(),
+        }
+    }
+
+    pub fn insert(&mut self, table_name: String, row: HashMap<String, Value>) {
+        self.operations
+            .push((Operation::Insert { table_name, row }, None));
+    }
+
+    pub fn update(
+        &mut self,
+        table_name: String,
+        query: Query,
+        update_fn: fn(&mut HashMap<String, Value>),
+    ) {
+        self.operations.push((
+            Operation::Update {
+                table_name,
+                query,
+            },
+            Some(update_fn),
+        ));
+    }
+
+    pub fn delete(&mut self, table_name: String, query: Query) {
+        self.operations
+            .push((Operation::Delete { table_name, query }, None));
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Table {
     name: String,
@@ -127,7 +182,7 @@ impl Ord for Value {
 }
 
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Operator {
     Eq,
     NotEq,
@@ -137,14 +192,14 @@ pub enum Operator {
     Lte,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Condition {
     pub column: String,
     pub operator: Operator,
     pub value: Value,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Query {
     MatchAll,
     Condition(Condition),
@@ -180,6 +235,39 @@ impl Database {
             tables: Arc::new(RwLock::new(HashMap::new())),
             key,
         }
+    }
+
+    pub fn begin_transaction(&self) -> Transaction {
+        Transaction::new()
+    }
+
+    pub async fn commit(&mut self, transaction: Transaction) -> Result<(), String> {
+        let mut tables = self.tables.write().await;
+        let original_tables = tables.clone();
+
+        for (op, update_fn) in transaction.operations {
+            let result = match op {
+                Operation::Insert { table_name, row } => {
+                    self.insert_internal(&mut tables, &table_name, row)
+                }
+                Operation::Update { table_name, query } => self
+                    .update_internal(&mut tables, &table_name, &query, update_fn.unwrap())
+                    .map(|_| ()),
+                Operation::Delete { table_name, query } => self
+                    .delete_internal(&mut tables, &table_name, &query)
+                    .map(|_| ()),
+            };
+            if result.is_err() {
+                *tables = original_tables;
+                return Err(result.unwrap_err());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn rollback(&self, transaction: Transaction) {
+        // No-op for now, as commit will handle rollback on failure.
+        // This can be expanded later if needed.
     }
     pub async fn save(&self, path: &str) -> io::Result<()> {
         let start = Instant::now();
@@ -280,13 +368,12 @@ impl Database {
         Ok(())
     }
 
-    pub async fn insert(
-        &mut self,
+    fn insert_internal(
+        &self,
+        tables: &mut HashMap<String, Table>,
         table_name: &str,
         row: HashMap<String, Value>,
-    ) -> Result<Duration, String> {
-        let start = Instant::now();
-        let mut tables = self.tables.write().await;
+    ) -> Result<(), String> {
         let table = tables
             .get_mut(table_name)
             .ok_or_else(|| format!("Table {} not found", table_name))?;
@@ -306,6 +393,17 @@ impl Database {
 
         table.data.push(row);
         table.build_merkle_tree();
+        Ok(())
+    }
+
+    pub async fn insert(
+        &mut self,
+        table_name: &str,
+        row: HashMap<String, Value>,
+    ) -> Result<Duration, String> {
+        let start = Instant::now();
+        let mut tables = self.tables.write().await;
+        self.insert_internal(&mut tables, table_name, row)?;
         Ok(start.elapsed())
     }
 
@@ -422,16 +520,13 @@ impl Database {
         }
     }
 
-    pub async fn update<U>(
-        &mut self,
+    fn update_internal(
+        &self,
+        tables: &mut HashMap<String, Table>,
         table_name: &str,
         query: &Query,
-        update_fn: U,
-    ) -> Result<usize, String>
-    where
-        U: Fn(&mut HashMap<String, Value>),
-    {
-        let mut tables = self.tables.write().await;
+        update_fn: fn(&mut HashMap<String, Value>),
+    ) -> Result<usize, String> {
         let table = tables
             .get_mut(table_name)
             .ok_or_else(|| format!("Table {} not found", table_name))?;
@@ -459,8 +554,22 @@ impl Database {
         Ok(updated_count)
     }
 
-    pub async fn delete(&mut self, table_name: &str, query: &Query) -> Result<usize, String> {
+    pub async fn update(
+        &mut self,
+        table_name: &str,
+        query: &Query,
+        update_fn: fn(&mut HashMap<String, Value>),
+    ) -> Result<usize, String> {
         let mut tables = self.tables.write().await;
+        self.update_internal(&mut tables, table_name, query, update_fn)
+    }
+
+    fn delete_internal(
+        &self,
+        tables: &mut HashMap<String, Table>,
+        table_name: &str,
+        query: &Query,
+    ) -> Result<usize, String> {
         let table = tables
             .get_mut(table_name)
             .ok_or_else(|| format!("Table {} not found", table_name))?;
@@ -493,6 +602,11 @@ impl Database {
         }
 
         Ok(deleted_count)
+    }
+
+    pub async fn delete(&mut self, table_name: &str, query: &Query) -> Result<usize, String> {
+        let mut tables = self.tables.write().await;
+        self.delete_internal(&mut tables, table_name, query)
     }
 
     pub async fn verify_integrity(&self) -> bool {

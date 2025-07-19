@@ -27,3 +27,7 @@ path = "examples/example.rs"
 [[test]]
 name = "test_db"
 path = "tests/test_db.rs"
+
+[[test]]
+name = "test_transactions"
+path = "tests/test_transactions.rs"
