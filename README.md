@@ -10,10 +10,20 @@ zapdb is a lightweight database written in Rust. It offers basic database functi
 - Load and save the database to a file
 - Asynchronous stuff
 - Encryption support
+- Gzip compression
+- Merkle tree for data integrity
 
 ### Encryption
 
-zapdb supports encryption out of the box. To use it, you need to provide a 32-byte key to the `Database::new` function. The database will then be encrypted when saved to a file and decrypted when loaded.
+zapdb supports encryption out of the box. To use it, you need to provide a 32-byte key to the `Database::new` function. The database will then be encrypted when saved to a file and decrypted when loaded. The current encryption algorithm is XChaCha20-Poly1305, but it will be updated to AES-256-GCM in a future release.
+
+### Compression
+
+To reduce the size of the database on disk, zapdb uses Gzip compression. The data is compressed before being encrypted and saved to a file, and decompressed after being loaded and decrypted.
+
+### Data Integrity
+
+zapdb uses a Merkle tree to ensure the integrity of the data. A Merkle tree is a tree in which every leaf node is labelled with the hash of a data block and every non-leaf node is labelled with the cryptographic hash of the labels of its child nodes. This allows for efficient verification of the data integrity. You can verify the integrity of the database by calling the `verify_integrity` method on the `Database` struct.
 
 #### Installation
 
