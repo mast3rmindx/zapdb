@@ -264,12 +264,29 @@ pub struct Join {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum AggregateFunction {
+    Count,
+    Sum,
+    Avg,
+    Min,
+    Max,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AggregateQuery {
+    pub function: AggregateFunction,
+    pub column: String,
+    pub filter: Option<Box<Query>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Query {
     MatchAll,
     Condition(Condition),
     And(Vec<Query>),
     Or(Vec<Query>),
     Join(Join),
+    Aggregate(AggregateQuery),
 }
 
 impl Eq for Value {}
@@ -648,16 +665,24 @@ impl Database {
             .get(table_name)
             .ok_or_else(|| format!("Table {} not found", table_name))?;
 
-        let results = if let Query::Join(join) = query {
-            let target_table = tables
-                .get(&join.target_table)
-                .ok_or_else(|| format!("Table {} not found", join.target_table))?;
-            self.execute_join_query(table, target_table, join)
-        } else {
-            self.execute_query(table, query)
+        let results = match query {
+            Query::Join(join) => {
+                let target_table = tables
+                    .get(&join.target_table)
+                    .ok_or_else(|| format!("Table {} not found", join.target_table))?;
+                self.execute_join_query(table, target_table, join)
+            }
+            Query::Aggregate(aggregate_query) => {
+                let result = self.execute_aggregate_query(table, aggregate_query)?;
+                let mut row = HashMap::new();
+                row.insert("result".to_string(), result);
+                vec![row]
+            }
+            _ => self
+                .execute_query(table, query)
                 .into_iter()
                 .map(|i| table.data[i].clone())
-                .collect()
+                .collect(),
         };
 
         Ok((results, start.elapsed()))
@@ -728,8 +753,92 @@ impl Database {
         results
     }
 
+    pub async fn aggregate(
+        &self,
+        table_name: &str,
+        aggregate_query: &AggregateQuery,
+    ) -> Result<(Value, Duration), String> {
+        let start = Instant::now();
+        let tables = self.tables.read().await;
+        let table = tables
+            .get(table_name)
+            .ok_or_else(|| format!("Table {} not found", table_name))?;
+
+        let result = self.execute_aggregate_query(table, aggregate_query)?;
+        Ok((result, start.elapsed()))
+    }
+
+    fn execute_aggregate_query(
+        &self,
+        table: &Table,
+        aggregate_query: &AggregateQuery,
+    ) -> Result<Value, String> {
+        let rows_to_aggregate: Vec<&HashMap<String, Value>> =
+            if let Some(filter) = &aggregate_query.filter {
+                self.execute_query(table, filter)
+                    .into_iter()
+                    .map(|i| &table.data[i])
+                    .collect()
+            } else {
+                table.data.iter().collect()
+            };
+
+        let values: Vec<&Value> = rows_to_aggregate
+            .iter()
+            .filter_map(|row| row.get(&aggregate_query.column))
+            .collect();
+
+        match aggregate_query.function {
+            AggregateFunction::Count => Ok(Value::Integer(values.len() as i64)),
+            AggregateFunction::Sum => {
+                let mut sum = 0.0;
+                for value in values {
+                    match value {
+                        Value::Integer(i) => sum += *i as f64,
+                        Value::Float(f) => sum += *f,
+                        _ => {}
+                    }
+                }
+                Ok(Value::Float(sum))
+            }
+            AggregateFunction::Avg => {
+                let mut sum = 0.0;
+                let mut count = 0;
+                for value in values {
+                    match value {
+                        Value::Integer(i) => {
+                            sum += *i as f64;
+                            count += 1;
+                        }
+                        Value::Float(f) => {
+                            sum += *f;
+                            count += 1;
+                        }
+                        _ => {}
+                    }
+                }
+                if count == 0 {
+                    Ok(Value::Float(0.0))
+                } else {
+                    Ok(Value::Float(sum / count as f64))
+                }
+            }
+            AggregateFunction::Min => {
+                values.into_iter().min().map(|v| v.clone()).ok_or_else(|| "No values to aggregate".to_string())
+            }
+            AggregateFunction::Max => {
+                values.into_iter().max().map(|v| v.clone()).ok_or_else(|| "No values to aggregate".to_string())
+            }
+        }
+    }
+
     fn execute_query(&self, table: &Table, query: &Query) -> Vec<usize> {
         match query {
+            Query::Aggregate(_) => {
+                // This should be handled in the `select` function
+                // but we need to satisfy the compiler for now.
+                vec![]
+            }
             Query::Join(_) => {
                 // This should be handled in the `select` function
                 // but we need to satisfy the compiler for now.
