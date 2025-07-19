@@ -4,7 +4,7 @@ use std::collections::HashMap;
 #[tokio::main]
 async fn main() {
     let key = [0u8; 32];
-    let mut db = Database::new(key);
+    let mut db = Database::new(key, "database.wal");
 
     // Loading the database from a file
     match db.load("database.zap").await {

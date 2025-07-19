@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::time::{Instant, Duration};
 use std::fs::File;
-use std::io::{self, Write, Read};
+use std::io::{self, Write, Read, BufWriter};
 use serde::{Serialize, Deserialize};
 use flate2::write::GzEncoder;
 use flate2::read::GzDecoder;
@@ -52,6 +52,27 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Operation {
+    Insert {
+        table_name: String,
+        row: HashMap<String, Value>,
+    },
+    Update {
+        table_name: String,
+        query: Query,
+        // update_fn is not serializable, so we'll handle it differently
+    },
+    Delete {
+        table_name: String,
+        query: Query,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum WalEntry {
+    CreateTable {
+        name: String,
+        columns: Vec<Column>,
+    },
     Insert {
         table_name: String,
         row: HashMap<String, Value>,
@@ -224,16 +245,40 @@ impl Hash for Value {
     }
 }
 
+pub struct WalWriter {
+    writer: BufWriter<File>,
+}
+
+impl WalWriter {
+    pub fn new(path: &str) -> io::Result<Self> {
+        let file = File::options().append(true).create(true).open(path)?;
+        Ok(Self {
+            writer: BufWriter::new(file),
+        })
+    }
+
+    pub fn log(&mut self, entry: &WalEntry) -> io::Result<()> {
+        let encoded: Vec<u8> = bincode::serialize(entry).unwrap();
+        self.writer.write_all(&encoded)?;
+        self.writer.flush()?;
+        Ok(())
+    }
+}
+
 pub struct Database {
     pub tables: Arc<RwLock<HashMap<String, Table>>>,
     key: [u8; 32],
+    wal_writer: Arc<RwLock<WalWriter>>,
+    wal_path: String,
 }
 
 impl Database {
-    pub fn new(key: [u8; 32]) -> Self {
+    pub fn new(key: [u8; 32], wal_path: &str) -> Self {
         Self {
             tables: Arc::new(RwLock::new(HashMap::new())),
             key,
+            wal_writer: Arc::new(RwLock::new(WalWriter::new(wal_path).unwrap())),
+            wal_path: wal_path.to_string(),
         }
     }
 
@@ -242,6 +287,25 @@ impl Database {
     }
 
     pub async fn commit(&mut self, transaction: Transaction) -> Result<(), String> {
+        let mut wal_writer = self.wal_writer.write().await;
+        for (op, _) in &transaction.operations {
+            let wal_entry = match op {
+                Operation::Insert { table_name, row } => WalEntry::Insert {
+                    table_name: table_name.clone(),
+                    row: row.clone(),
+                },
+                Operation::Update { table_name, query } => WalEntry::Update {
+                    table_name: table_name.clone(),
+                    query: query.clone(),
+                },
+                Operation::Delete { table_name, query } => WalEntry::Delete {
+                    table_name: table_name.clone(),
+                    query: query.clone(),
+                },
+            };
+            wal_writer.log(&wal_entry).map_err(|e| e.to_string())?;
+        }
+
         let mut tables = self.tables.write().await;
         let original_tables = tables.clone();
 
@@ -291,38 +355,81 @@ impl Database {
         let mut file = File::create(path)?;
         file.write_all(&nonce)?;
         file.write_all(&ciphertext)?;
+
+        // Truncate the WAL file
+        File::create(&self.wal_path)?;
+
         println!("Database saved in {:?}", start.elapsed());
         Ok(())
     }
 
     pub async fn load(&mut self, path: &str) -> io::Result<()> {
         let start = Instant::now();
-        let mut file = File::open(path)?;
+        if let Ok(mut file) = File::open(path) {
+            let mut buffer = Vec::new();
+            file.read_to_end(&mut buffer)?;
+
+            let cipher = Aes256Gcm::new((&self.key).into());
+            let nonce = Nonce::from_slice(&buffer[..12]);
+            let ciphertext = &buffer[12..];
+
+            let decrypted_data = cipher
+                .decrypt(nonce, ciphertext)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+
+            let mut decoder = GzDecoder::new(&decrypted_data[..]);
+            let mut decompressed_data = Vec::new();
+            decoder.read_to_end(&mut decompressed_data)?;
+
+            let tables: HashMap<String, Table> = bincode::deserialize(&decompressed_data)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+            let mut self_tables = self.tables.write().await;
+            *self_tables = tables;
+            for table in self_tables.values_mut() {
+                table.build_merkle_tree();
+            }
+        }
+
+        self.replay_wal().await?;
+
+        println!("Database loaded in {:?}", start.elapsed());
+        Ok(())
+    }
+
+    async fn replay_wal(&mut self) -> io::Result<()> {
+        let mut file = match File::open(&self.wal_path) {
+            Ok(f) => f,
+            Err(_) => return Ok(()),
+        };
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
 
-        let cipher = Aes256Gcm::new((&self.key).into());
-        let nonce = Nonce::from_slice(&buffer[..12]);
-        let ciphertext = &buffer[12..];
-
-        let decrypted_data = cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-
-        let mut decoder = GzDecoder::new(&decrypted_data[..]);
-        let mut decompressed_data = Vec::new();
-        decoder.read_to_end(&mut decompressed_data)?;
-
-        let tables: HashMap<String, Table> = bincode::deserialize(&decompressed_data)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-        let mut self_tables = self.tables.write().await;
-        *self_tables = tables;
-        for table in self_tables.values_mut() {
-            table.build_merkle_tree();
+        let mut cursor = io::Cursor::new(buffer);
+        while cursor.position() < cursor.get_ref().len() as u64 {
+            let entry: WalEntry = bincode::deserialize_from(&mut cursor)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            self.apply_wal_entry(entry).await;
         }
-        println!("Database loaded in {:?}", start.elapsed());
+
         Ok(())
+    }
+
+    async fn apply_wal_entry(&mut self, entry: WalEntry) {
+        match entry {
+            WalEntry::CreateTable { name, columns } => {
+                let _ = self.create_table(name, columns).await;
+            }
+            WalEntry::Insert { table_name, row } => {
+                let _ = self.insert(&table_name, row).await;
+            }
+            WalEntry::Update { .. } => {
+                // Not implemented due to non-serializable update_fn
+            }
+            WalEntry::Delete { table_name, query } => {
+                let _ = self.delete(&table_name, &query).await;
+            }
+        }
     }
     pub async fn create_table(
         &mut self,
@@ -330,6 +437,16 @@ impl Database {
         columns: Vec<Column>,
     ) -> Result<Duration, String> {
         let start = Instant::now();
+        let wal_entry = WalEntry::CreateTable {
+            name: name.clone(),
+            columns: columns.clone(),
+        };
+        self.wal_writer
+            .write()
+            .await
+            .log(&wal_entry)
+            .map_err(|e| e.to_string())?;
+
         let mut tables = self.tables.write().await;
         if tables.contains_key(&name) {
             return Err(format!("Table {} already exists", name));
@@ -402,6 +519,16 @@ impl Database {
         row: HashMap<String, Value>,
     ) -> Result<Duration, String> {
         let start = Instant::now();
+        let wal_entry = WalEntry::Insert {
+            table_name: table_name.to_string(),
+            row: row.clone(),
+        };
+        self.wal_writer
+            .write()
+            .await
+            .log(&wal_entry)
+            .map_err(|e| e.to_string())?;
+
         let mut tables = self.tables.write().await;
         self.insert_internal(&mut tables, table_name, row)?;
         Ok(start.elapsed())
@@ -560,6 +687,16 @@ impl Database {
         query: &Query,
         update_fn: fn(&mut HashMap<String, Value>),
     ) -> Result<usize, String> {
+        let wal_entry = WalEntry::Update {
+            table_name: table_name.to_string(),
+            query: query.clone(),
+        };
+        self.wal_writer
+            .write()
+            .await
+            .log(&wal_entry)
+            .map_err(|e| e.to_string())?;
+
         let mut tables = self.tables.write().await;
         self.update_internal(&mut tables, table_name, query, update_fn)
     }
@@ -605,6 +742,16 @@ impl Database {
     }
 
     pub async fn delete(&mut self, table_name: &str, query: &Query) -> Result<usize, String> {
+        let wal_entry = WalEntry::Delete {
+            table_name: table_name.to_string(),
+            query: query.clone(),
+        };
+        self.wal_writer
+            .write()
+            .await
+            .log(&wal_entry)
+            .map_err(|e| e.to_string())?;
+
         let mut tables = self.tables.write().await;
         self.delete_internal(&mut tables, table_name, query)
     }
