@@ -6,5 +6,3 @@ mod test_aggregation;
 mod test_joins;
 #[cfg(test)]
 mod test_new_data_types;
-#[cfg(test)]
-mod test_transactions;

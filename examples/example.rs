@@ -1,10 +1,11 @@
-use zapdb::{Column, DataType, Database, Value, Query, Condition, Operator};
+use zapdb::{Column, DataType, Value, Query, Condition, Operator, create_pool};
 use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() {
     let key = [0u8; 32];
-    let mut db = Database::new(key, "database.wal");
+    let pool = create_pool(key, "database.wal").unwrap();
+    let db = pool.get().unwrap();
 
     // Loading the database from a file
     match db.load("database.zap").await {
