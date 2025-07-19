@@ -6,6 +6,11 @@ use std::io::{self, Write, Read};
 use serde::{Serialize, Deserialize};
 use tokio::sync::RwLock;
 use std::sync::Arc;
+use chacha20poly1305::{
+    aead::{Aead},
+    XChaCha20Poly1305, KeyInit,
+};
+use rand::{rngs::OsRng, RngCore};
 
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -124,27 +129,33 @@ impl Hash for Value {
 
 pub struct Database {
     tables: Arc<RwLock<HashMap<String, Table>>>,
-}
-
-impl Default for Database {
-    fn default() -> Self {
-        Self {
-            tables: Arc::new(RwLock::new(HashMap::new())),
-        }
-    }
+    key: [u8; 32],
 }
 
 impl Database {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(key: [u8; 32]) -> Self {
+        Self {
+            tables: Arc::new(RwLock::new(HashMap::new())),
+            key,
+        }
     }
     pub async fn save(&self, path: &str) -> io::Result<()> {
         let start = Instant::now();
         let tables = self.tables.read().await;
         let encoded: Vec<u8> =
             bincode::serialize(&*tables).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        let cipher = XChaCha20Poly1305::new((&self.key).into());
+        let mut nonce = [0u8; 24];
+        OsRng.fill_bytes(&mut nonce);
+
+        let ciphertext = cipher
+            .encrypt((&nonce).into(), encoded.as_slice())
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+
         let mut file = File::create(path)?;
-        file.write_all(&encoded)?;
+        file.write_all(&nonce)?;
+        file.write_all(&ciphertext)?;
         println!("Database saved in {:?}", start.elapsed());
         Ok(())
     }
@@ -155,7 +166,15 @@ impl Database {
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
 
-        let tables: HashMap<String, Table> = bincode::deserialize(&buffer)
+        let cipher = XChaCha20Poly1305::new((&self.key).into());
+        let nonce = &buffer[..24];
+        let ciphertext = &buffer[24..];
+
+        let decrypted_data = cipher
+            .decrypt(nonce.into(), ciphertext)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+
+        let tables: HashMap<String, Table> = bincode::deserialize(&decrypted_data)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
         let mut self_tables = self.tables.write().await;
