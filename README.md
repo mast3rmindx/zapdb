@@ -158,6 +158,44 @@ async fn aggregate_example() {
 }
 ```
 
+### Sharding
+
+zapdb supports sharding to distribute data across multiple nodes. The communication between nodes is encrypted using AES-256-GCM to ensure that your data is secure.
+
+To enable sharding, you need to provide a list of shard addresses and a 32-byte key for encryption. Here's an example:
+
+```rust
+use zapdb::{create_pool, Database};
+use rand::rngs::OsRng;
+use rand::RngCore;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+async fn sharding_example() {
+    // Create a new database instance
+    let db = Arc::new(RwLock::new(Database::new([0; 32], "test_sharding.wal")));
+
+    // Generate a key for encryption
+    let mut key = [0u8; 32];
+    OsRng.fill_bytes(&mut key);
+
+    // Enable sharding
+    db.write()
+        .await
+        .enable_sharding(vec!["127.0.0.1:8080".to_string()], key)
+        .await
+        .unwrap();
+
+    // Start the network in the background
+    let mut db_clone = db.clone();
+    tokio::spawn(async move {
+        db_clone.write().await.start_network().await;
+    });
+
+    // ... (use the database as usual)
+}
+```
+
 ## How It Works
 
 ### Encryption

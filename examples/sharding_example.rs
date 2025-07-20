@@ -4,16 +4,22 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time;
 use zapdb::{Database, Value};
+use rand::rngs::OsRng;
+use rand::RngCore;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a new database instance
     let db = Arc::new(RwLock::new(Database::new([0; 32], "test_sharding.wal")));
 
+    // Generate a key for encryption
+    let mut key = [0u8; 32];
+    OsRng.fill_bytes(&mut key);
+
     // Enable sharding
     db.write()
         .await
-        .enable_sharding(vec!["127.0.0.1:8080".to_string()])
+        .enable_sharding(vec!["127.0.0.1:8080".to_string()], key)
         .await?;
 
     // Start the network in the background
@@ -67,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Results: {:?}", results);
 
-    // Give the network some time to run
+    // Give the some time to run
     time::sleep(Duration::from_secs(2)).await;
 
     // Stop the network
