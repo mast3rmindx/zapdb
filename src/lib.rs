@@ -386,9 +386,10 @@ impl Database {
     pub async fn enable_sharding(
         &mut self,
         shards: Vec<String>,
+        key: [u8; 32],
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.shard_manager = Some(ShardManager::new(shards));
-        self.network_manager = Some(NetworkManager::new().await?);
+        self.network_manager = Some(NetworkManager::new(key).await?);
         Ok(())
     }
 
