@@ -18,6 +18,13 @@ use aes_gcm::{
 use crate::optimizer::QueryPlanner;
 
 mod optimizer;
+
+#[cfg(feature = "sharding")]
+pub mod network;
+#[cfg(feature = "sharding")]
+pub mod sharding;
+
+
 use rand::{rngs::OsRng, RngCore};
 use rs_merkle::{MerkleTree, Hasher as MerkleHasher};
 use chrono::{DateTime, Utc};
@@ -338,12 +345,21 @@ impl WalWriter {
     }
 }
 
+#[cfg(feature = "sharding")]
+use crate::network::NetworkManager;
+#[cfg(feature = "sharding")]
+use crate::sharding::ShardManager;
+
 pub struct Database {
     pub tables: Arc<RwLock<HashMap<String, Table>>>,
     key: [u8; 32],
     wal_writer: Arc<RwLock<WalWriter>>,
     wal_path: String,
     query_planner: QueryPlanner,
+    #[cfg(feature = "sharding")]
+    shard_manager: Option<ShardManager>,
+    #[cfg(feature = "sharding")]
+    network_manager: Option<NetworkManager>,
 }
 
 pub fn begin_transaction() -> Transaction {
@@ -351,13 +367,35 @@ pub fn begin_transaction() -> Transaction {
 }
 
 impl Database {
-    fn new(key: [u8; 32], wal_path: &str) -> Self {
+    pub fn new(key: [u8; 32], wal_path: &str) -> Self {
         Self {
             tables: Arc::new(RwLock::new(HashMap::new())),
             key,
             wal_writer: Arc::new(RwLock::new(WalWriter::new(wal_path).unwrap())),
             wal_path: wal_path.to_string(),
             query_planner: QueryPlanner::new(),
+            #[cfg(feature = "sharding")]
+            shard_manager: None,
+            #[cfg(feature = "sharding")]
+            network_manager: None,
+        }
+    }
+
+
+    #[cfg(feature = "sharding")]
+    pub async fn enable_sharding(
+        &mut self,
+        shards: Vec<String>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.shard_manager = Some(ShardManager::new(shards));
+        self.network_manager = Some(NetworkManager::new().await?);
+        Ok(())
+    }
+
+    #[cfg(feature = "sharding")]
+    pub async fn start_network(&mut self) {
+        if let Some(network_manager) = &mut self.network_manager {
+            network_manager.run().await;
         }
     }
 
@@ -660,6 +698,9 @@ impl Database {
         row: HashMap<String, Value>,
     ) -> Result<Duration, String> {
         let start = Instant::now();
+
+
+
         let wal_entry = WalEntry::Insert {
             table_name: table_name.to_string(),
             row: row.clone(),
@@ -685,6 +726,8 @@ impl Database {
         let table = tables
             .get(table_name)
             .ok_or_else(|| format!("Table {} not found", table_name))?;
+
+
 
         let optimized_query = self.query_planner.optimize(query.clone(), table);
 

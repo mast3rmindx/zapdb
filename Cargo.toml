@@ -25,6 +25,16 @@ serde_json = "1.0"
 dashmap = "5.5.3"
 r2d2 = "0.8.10"
 
+
+
+ant-core = { version = "0.1.0", optional = true }
+
+[features]
+default = []
+sharding = ["ant-core"]
+
+
+
 [lib]
 name = "zapdb"
 path = "src/lib.rs"
@@ -48,3 +58,8 @@ path = "tests/test_new_data_types.rs"
 [[test]]
 name = "test_transactions"
 path = "tests/test_transactions.rs"
+
+[[example]]
+name = "sharding_example"
+path = "examples/sharding_example.rs"
+required-features = ["sharding"]
